@@ -50,10 +50,10 @@ class ShadowBot(commands.Bot):
         intents.reactions = True  
         intents.guilds = True  
         intents.moderation = True 
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="s!", intents=intents) # Prefix s! olarak güncellendi, ProBot ile karışmaz!
 
     async def setup_hook(self):
-        print(f"[{self.user.name}] Bot initialized. Use !sync in your server to register slash commands.")
+        print(f"[{self.user.name}] Bot initialized. Use s!sync in your server to register slash commands.")
 
 bot = ShadowBot()
 active_countdown_tasks = {}
@@ -130,10 +130,8 @@ async def on_member_join(member):
     banned_list = load_banned_users()
     if member.id in banned_list:
         try:
-            # Kara listedeki kullanıcı girmeye çalışırsa anında banla
             await member.ban(reason="Shadow Security: Auto-Reban (User is blacklisted).")
             
-            # Log kanalına bildirim gönder
             embed = discord.Embed(title="🚨 Auto-Reban Triggered", color=discord.Color.dark_red())
             embed.add_field(name="User", value=f"{member.mention} ({member.name})", inline=True)
             embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
@@ -146,24 +144,21 @@ async def on_member_join(member):
 # ==========================================
 # MODERASYON & SİSTEM KOMUTLARI
 # ==========================================
-@bot.tree.command(name="ban", description="Bans a user permanently and locks them from rejoining.")
+@bot.tree.command(name="banuser", description="Bans a user permanently and locks them from rejoining.")
 @is_staff()
 @app_commands.describe(user="The user to ban", reason="Reason for the ban")
-async def assignment_ban(interaction: discord.Interaction, user: discord.User, reason: str = "No reason provided"):
+async def assignment_banuser(interaction: discord.Interaction, user: discord.User, reason: str = "No reason provided"):
     await interaction.response.defer(ephemeral=True)
     
     if user.id == interaction.user.id:
         await interaction.followup.send("❌ You cannot ban yourself.", ephemeral=True)
         return
 
-    # Kullanıcıyı kara listeye kaydet (Böylece geri giremeyecek)
     save_banned_user(user.id)
     
     try:
-        # Sunucudan uzaklaştır
         await interaction.guild.ban(user, reason=f"Banned by {interaction.user.name}. Reason: {reason}")
         
-        # Log kanalı bildirimi
         embed = discord.Embed(title="🔨 User Banned & Blacklisted", color=discord.Color.red())
         embed.add_field(name="Target User", value=f"{user.mention} ({user.id})", inline=False)
         embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
@@ -176,10 +171,10 @@ async def assignment_ban(interaction: discord.Interaction, user: discord.User, r
     except Exception as e:
         await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
 
-@bot.tree.command(name="unban", description="Unbans a user and removes them from the blacklist database.")
+@bot.tree.command(name="unbanuser", description="Unbans a user and removes them from the blacklist database.")
 @is_staff()
 @app_commands.describe(user_id="The Discord ID of the user to unban")
-async def assignment_unban(interaction: discord.Interaction, user_id: str):
+async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
     await interaction.response.defer(ephemeral=True)
     
     if not user_id.isdigit():
@@ -187,16 +182,12 @@ async def assignment_unban(interaction: discord.Interaction, user_id: str):
         return
         
     target_id = int(user_id)
-    
-    # Kara listeden (banned_users.txt) ID'yi sil
     remove_banned_user(target_id)
     
     try:
-        # Sunucu banını aç
         ban_entry = await interaction.guild.fetch_ban(discord.Object(id=target_id))
         await interaction.guild.unban(ban_entry.user, reason=f"Unbanned by {interaction.user.name}")
         
-        # Log kanalı bildirimi
         embed = discord.Embed(title="🔓 User Unbanned & Whitelisted", color=discord.Color.green())
         embed.add_field(name="Target ID", value=f"`{target_id}`", inline=False)
         embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
@@ -321,14 +312,21 @@ async def on_message(message):
     await bot.process_commands(message)
 
 @bot.command(name="sync")
-@commands.is_owner()
 async def sync_commands(ctx):
+    # Koda yazdığın SPECIAL_OWNER_ID kontrolü yapar
+    if ctx.author.id != SPECIAL_OWNER_ID:
+        await ctx.send("❌ You are not authorized to use this command!")
+        return
+
     guild = discord.Object(id=GUILD_ID)
-    await ctx.send("🔄 Syncing...")
-    bot.tree.clear_commands(guild=guild)
-    bot.tree.copy_global_to(guild=guild)
-    await bot.tree.sync(guild=guild)
-    await ctx.send("✅ Synced!")
+    await ctx.send("🔄 Syncing slash commands specifically to this server...")
+    try:
+        bot.tree.clear_commands(guild=guild)
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
+        await ctx.send("✅ Synced successfully! Please restart your Discord app (Ctrl+R) if commands don't show up immediately.")
+    except Exception as e:
+        await ctx.send(f"❌ Sync failed: {e}")
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
