@@ -3,6 +3,19 @@ from discord import app_commands
 from discord.ext import commands
 import asyncio
 import os
+# --- RENDER KAPANMA ENGELLEYİCİ FLASK ALTYAPISI (YENİ) ---
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is Alive!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+# -------------------------------------------------------
 
 # SUNUCU ID VE ÖZEL YETKİLİ KULLANICI ID
 GUILD_ID = 1496194010187042889 
@@ -239,6 +252,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message("❌ **Security Alert:** You are not authorized!", ephemeral=True)
 
-# BOT TOKEN (Sistem hafızasından gizlice okunur)
+# BOT TOKEN (Sistem hafızasından gizlice okunur ve Render sunucusu tetiklenir)
 TOKEN = os.getenv("DISCORD_TOKEN")
+Thread(target=run).start() # Web sunucusunu bot çalışmadan hemen önce başlatır
 bot.run(TOKEN)
