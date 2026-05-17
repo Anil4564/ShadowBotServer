@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 import asyncio
 import os
+import time
 # --- RENDER KAPANMA ENGELLEYİCİ FLASK ALTYAPISI ---
 from flask import Flask
 from threading import Thread
@@ -24,36 +25,88 @@ BAN_FILE = "banned_users.txt"
 
 def load_banned_users():
     if not os.path.exists(BAN_FILE):
-        return set()
+        return {}
+    banned_dict = {}
     with open(BAN_FILE, "r") as f:
-        return {int(line.strip()) for line in f if line.strip().isdigit()}
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if "|" in line:
+                parts = line.split("|")
+                if len(parts) == 2 and parts[0].isdigit():
+                    uid = int(parts[0])
+                    # Eğer 'lifetime' değilse sayıya (timestamp) çevir
+                    banned_dict[uid] = parts[1] if parts[1] == "lifetime" else float(parts[1])
+            elif line.isdigit():
+                # Eski kayıtlara uyumluluk için direkt lifetime sayıyoruz
+                banned_dict[int(line)] = "lifetime"
+    return banned_dict
 
-def save_banned_user(user_id):
+def save_all_banned_users(banned_dict):
+    with open(BAN_FILE, "w") as f:
+        for uid, expire in banned_dict.items():
+            f.write(f"{uid}|{expire}\n")
+
+def save_banned_user(user_id, duration_days=0):
     banned = load_banned_users()
-    if user_id not in banned:
-        with open(BAN_FILE, "a") as f:
-            f.write(f"{user_id}\n")
+    if duration_days <= 0:
+        banned[user_id] = "lifetime"
+    else:
+        # Şu anki zamana (saniye cinsinden) gün süresini ekliyoruz
+        expire_timestamp = time.time() + (duration_days * 86400)
+        banned[user_id] = expire_timestamp
+    save_all_banned_users(banned)
 
 def remove_banned_user(user_id):
     banned = load_banned_users()
     if user_id in banned:
-        banned.remove(user_id)
-        with open(BAN_FILE, "w") as f:
-            for uid in banned:
-                f.write(f"{uid}\n")
+        del banned[user_id]
+        save_all_banned_users(banned)
 
 class ShadowBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
-        intents.members = True # Sunucuya girişleri kontrol etmek için zorunlu!
+        intents.members = True 
         intents.reactions = True  
         intents.guilds = True  
         intents.moderation = True 
-        super().__init__(command_prefix="s!", intents=intents) # Prefix s! olarak güncellendi, ProBot ile karışmaz!
+        super().__init__(command_prefix="s!", intents=intents)
 
     async def setup_hook(self):
         print(f"[{self.user.name}] Bot initialized. Use s!sync in your server to register slash commands.")
+        # Arka planda süresi dolan banları kontrol eden döngüyü başlatır
+        self.loop.create_task(self.check_expired_bans())
+
+    async def check_expired_bans(self):
+        await self.wait_until_ready()
+        while not self.is_closed():
+            try:
+                banned_list = load_banned_users()
+                current_time = time.time()
+                changed = False
+                
+                guild = self.get_guild(GUILD_ID)
+                if guild:
+                    for uid, expire in list(banned_list.items()):
+                        if expire != "lifetime" and current_time >= expire:
+                            # Süre dolmuş! Kara listeden sil ve unban at
+                            del banned_list[uid]
+                            changed = True
+                            try:
+                                await guild.unban(discord.Object(id=uid), reason="Shadow Security: Temp-ban expired.")
+                                print(f"[ShadowBot] Temp-ban expired for user ID: {uid}. Automatically unbanned.")
+                            except Exception as e:
+                                print(f"[ShadowBot] Auto-unban failed for {uid}: {e}")
+                
+                if changed:
+                    save_all_banned_users(banned_list)
+                    
+            except Exception as e:
+                print(f"[ShadowBot] Error in check_expired_bans: {e}")
+                
+            await asyncio.sleep(60) # Her 60 saniyede bir süreleri kontrol eder
 
 bot = ShadowBot()
 active_countdown_tasks = {}
@@ -144,28 +197,33 @@ async def on_member_join(member):
 # ==========================================
 # MODERASYON & SİSTEM KOMUTLARI
 # ==========================================
-@bot.tree.command(name="banuser", description="Bans a user permanently and locks them from rejoining.")
+@bot.tree.command(name="banuser", description="Bans a user permanently or temporarily and locks them from rejoining.")
 @is_staff()
-@app_commands.describe(user="The user to ban", reason="Reason for the ban")
-async def assignment_banuser(interaction: discord.Interaction, user: discord.User, reason: str = "No reason provided"):
+@app_commands.describe(user="The user to ban", days="Ban duration in days (0 or leave blank for Lifetime)", reason="Reason for the ban")
+async def assignment_banuser(interaction: discord.Interaction, user: discord.User, days: int = 0, reason: str = "No reason provided"):
     await interaction.response.defer(ephemeral=True)
     
     if user.id == interaction.user.id:
         await interaction.followup.send("❌ You cannot ban yourself.", ephemeral=True)
         return
 
-    save_banned_user(user.id)
+    # Süre bilgisini metne döküyoruz
+    duration_text = "Lifetime" if days <= 0 else f"{days} Days"
+
+    # Kara listeye kaydet (Geri girmesini engellemek için)
+    save_banned_user(user.id, duration_days=days)
     
     try:
-        await interaction.guild.ban(user, reason=f"Banned by {interaction.user.name}. Reason: {reason}")
+        await interaction.guild.ban(user, reason=f"Banned by {interaction.user.name}. Duration: {duration_text}. Reason: {reason}")
         
         embed = discord.Embed(title="🔨 User Banned & Blacklisted", color=discord.Color.red())
-        embed.add_field(name="Target User", value=f"{user.mention} ({user.id})", inline=False)
+        embed.add_field(name="Target User", value=f"{user.mention} ({user.id})", inline=True)
+        embed.add_field(name="Duration", value=f"`{duration_text}`", inline=True)
         embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
         embed.add_field(name="Reason", value=reason, inline=False)
         await send_log(embed)
         
-        await interaction.followup.send(f"✅ **{user.name}** has been banned and locked into the blacklist database.", ephemeral=True)
+        await interaction.followup.send(f"✅ **{user.name}** has been banned for **{duration_text}** and locked into the blacklist database.", ephemeral=True)
     except discord.Forbidden:
         await interaction.followup.send("❌ Bot does not have permission to ban this user!", ephemeral=True)
     except Exception as e:
@@ -313,7 +371,6 @@ async def on_message(message):
 
 @bot.command(name="sync")
 async def sync_commands(ctx):
-    # Koda yazdığın SPECIAL_OWNER_ID kontrolü yapar
     if ctx.author.id != SPECIAL_OWNER_ID:
         await ctx.send("❌ You are not authorized to use this command!")
         return
