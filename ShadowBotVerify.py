@@ -36,10 +36,8 @@ def load_banned_users():
                 parts = line.split("|")
                 if len(parts) == 2 and parts[0].isdigit():
                     uid = int(parts[0])
-                    # Eğer 'lifetime' değilse sayıya (timestamp) çevir
                     banned_dict[uid] = parts[1] if parts[1] == "lifetime" else float(parts[1])
             elif line.isdigit():
-                # Eski kayıtlara uyumluluk için direkt lifetime sayıyoruz
                 banned_dict[int(line)] = "lifetime"
     return banned_dict
 
@@ -53,7 +51,6 @@ def save_banned_user(user_id, duration_days=0):
     if duration_days <= 0:
         banned[user_id] = "lifetime"
     else:
-        # Şu anki zamana (saniye cinsinden) gün süresini ekliyoruz
         expire_timestamp = time.time() + (duration_days * 86400)
         banned[user_id] = expire_timestamp
     save_all_banned_users(banned)
@@ -76,7 +73,6 @@ class ShadowBot(commands.Bot):
 
     async def setup_hook(self):
         print(f"[{self.user.name}] Bot initialized. Use s!sync in your server to register slash commands.")
-        # Arka planda süresi dolan banları kontrol eden döngüyü başlatır
         self.loop.create_task(self.check_expired_bans())
 
     async def check_expired_bans(self):
@@ -91,7 +87,6 @@ class ShadowBot(commands.Bot):
                 if guild:
                     for uid, expire in list(banned_list.items()):
                         if expire != "lifetime" and current_time >= expire:
-                            # Süre dolmuş! Kara listeden sil ve unban at
                             del banned_list[uid]
                             changed = True
                             try:
@@ -106,7 +101,7 @@ class ShadowBot(commands.Bot):
             except Exception as e:
                 print(f"[ShadowBot] Error in check_expired_bans: {e}")
                 
-            await asyncio.sleep(60) # Her 60 saniyede bir süreleri kontrol eder
+            await asyncio.sleep(60)
 
 bot = ShadowBot()
 active_countdown_tasks = {}
@@ -176,7 +171,26 @@ async def on_message_edit(before, after):
     await send_log(embed)
 
 # ==========================================
-# MODERASYON & SİSTEM KOMUTLARI (GÜNCELLENDİ)
+# 🛡️ OTO-TEKRAR BAN SİSTEMİ (AUTO-REBAN)
+# ==========================================
+@bot.event
+async def on_member_join(member):
+    banned_list = load_banned_users()
+    if member.id in banned_list:
+        try:
+            await member.ban(reason="Shadow Security: Auto-Reban (User is blacklisted).")
+            
+            embed = discord.Embed(title="🚨 Auto-Reban Triggered", color=discord.Color.dark_red())
+            embed.add_field(name="User", value=f"{member.mention} ({member.name})", inline=True)
+            embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
+            embed.add_field(name="Reason", value="Blacklisted user tried to rejoin the server.", inline=False)
+            await send_log(embed)
+            print(f"[ShadowBot] Auto-rebanned blacklisted user: {member.id}")
+        except Exception as e:
+            print(f"[ShadowBot] Failed to auto-reban {member.id}: {e}")
+
+# ==========================================
+# MODERASYON & SİSTEM KOMUTLARI
 # ==========================================
 @bot.tree.command(name="ban-user", description="Bans a user and locks them from rejoining. (0 for Lifetime)")
 @is_staff()
@@ -188,10 +202,7 @@ async def assignment_banuser(interaction: discord.Interaction, user: discord.Use
         await interaction.followup.send("❌ You cannot ban yourself.", ephemeral=True)
         return
 
-    # Süre bilgisini metne döküyoruz
     duration_text = "Lifetime" if days <= 0 else f"{days} Days"
-
-    # Kara listeye kaydet (Geri girmesini engellemek için)
     save_banned_user(user.id, duration_days=days)
     
     try:
@@ -238,68 +249,91 @@ async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
     except discord.Forbidden:
         await interaction.followup.send("❌ Bot lacks permission to unban this user.", ephemeral=True)
 
-# ==========================================
-# MODERASYON & SİSTEM KOMUTLARI
-# ==========================================
-@bot.tree.command(name="banuser", description="Bans a user permanently or temporarily and locks them from rejoining.")
+@bot.tree.command(name="channel-lock", description="Locks a channel for regular members. Staff roles remain untouched.")
 @is_staff()
-@app_commands.describe(user="The user to ban", days="Ban duration in days (0 or leave blank for Lifetime)", reason="Reason for the ban")
-async def assignment_banuser(interaction: discord.Interaction, user: discord.User, days: int = 0, reason: str = "No reason provided"):
+@app_commands.describe(channel="Select the text channel to lock")
+async def assignment_channellock(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
     
-    if user.id == interaction.user.id:
-        await interaction.followup.send("❌ You cannot ban yourself.", ephemeral=True)
-        return
-
-    # Süre bilgisini metne döküyoruz
-    duration_text = "Lifetime" if days <= 0 else f"{days} Days"
-
-    # Kara listeye kaydet (Geri girmesini engellemek için)
-    save_banned_user(user.id, duration_days=days)
+    allowed_staff_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
     
     try:
-        await interaction.guild.ban(user, reason=f"Banned by {interaction.user.name}. Duration: {duration_text}. Reason: {reason}")
+        # Kanaldaki mevcut tüm rol izinlerini alıyoruz
+        overwrites = channel.overwrites
         
-        embed = discord.Embed(title="🔨 User Banned & Blacklisted", color=discord.Color.red())
-        embed.add_field(name="Target User", value=f"{user.mention} ({user.id})", inline=True)
-        embed.add_field(name="Duration", value=f"`{duration_text}`", inline=True)
-        embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
-        embed.add_field(name="Reason", value=reason, inline=False)
-        await send_log(embed)
+        # Sunucunun tüm rollerini tarayıp staff hariç olanların mesaj yetkisini kapatıyoruz
+        for role in interaction.guild.roles:
+            if role.name in allowed_staff_roles or role.managed:
+                # Muaf olan roller ve bot entegrasyon rollerine dokunma
+                continue
+            
+            # Rolün kanaldaki mevcut izin durumunu çek ya da yeni oluştur
+            current_overwrite = overwrites.get(role, discord.PermissionOverwrite())
+            current_overwrite.send_messages = False # Mesaj yazmayı engelle
+            overwrites[role] = current_overwrite
+            
+        # @everyone (Herkes) rolünü de garantiye almak için kapatıyoruz
+        everyone_overwrite = overwrites.get(interaction.guild.default_role, discord.PermissionOverwrite())
+        everyone_overwrite.send_messages = False
+        overwrites[interaction.guild.default_role] = everyone_overwrite
+
+        # Değişiklikleri kanala uygula
+        await channel.edit(overwrites=overwrites)
         
-        await interaction.followup.send(f"✅ **{user.name}** has been banned for **{duration_text}** and locked into the blacklist database.", ephemeral=True)
+        # Kanala kilitlendi mesajı at
+        embed = discord.Embed(title="🔒 Channel Locked", description="This channel has been locked by staff. Regular members cannot type.", color=discord.Color.red())
+        await channel.send(embed=embed)
+        
+        # Log Bildirimi
+        log_embed = discord.Embed(title="🔒 Channel Locked", color=discord.Color.red())
+        log_embed.add_field(name="Channel", value=channel.mention, inline=True)
+        log_embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
+        await send_log(log_embed)
+
+        await interaction.followup.send(f"✅ {channel.mention} has been successfully locked for regular roles.", ephemeral=True)
     except discord.Forbidden:
-        await interaction.followup.send("❌ Bot does not have permission to ban this user!", ephemeral=True)
+        await interaction.followup.send("❌ Bot lacks permission to manage channel permissions.", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
 
-@bot.tree.command(name="unbanuser", description="Unbans a user and removes them from the blacklist database.")
+@bot.tree.command(name="channel-unlock", description="Unlocks a channel, restoring send message permissions for regular members.")
 @is_staff()
-@app_commands.describe(user_id="The Discord ID of the user to unban")
-async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
+@app_commands.describe(channel="Select the text channel to unlock")
+async def assignment_channelunlock(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
     
-    if not user_id.isdigit():
-        await interaction.followup.send("❌ Please provide a valid numerical Discord User ID.", ephemeral=True)
-        return
-        
-    target_id = int(user_id)
-    remove_banned_user(target_id)
+    allowed_staff_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
     
     try:
-        ban_entry = await interaction.guild.fetch_ban(discord.Object(id=target_id))
-        await interaction.guild.unban(ban_entry.user, reason=f"Unbanned by {interaction.user.name}")
+        overwrites = channel.overwrites
         
-        embed = discord.Embed(title="🔓 User Unbanned & Whitelisted", color=discord.Color.green())
-        embed.add_field(name="Target ID", value=f"`{target_id}`", inline=False)
-        embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
-        await send_log(embed)
+        for role in interaction.guild.roles:
+            if role.name in allowed_staff_roles or role.managed:
+                continue
+            
+            current_overwrite = overwrites.get(role, discord.PermissionOverwrite())
+            current_overwrite.send_messages = None # İzni nötrle/varsayılana çek (kilit kalksın)
+            overwrites[role] = current_overwrite
+            
+        everyone_overwrite = overwrites.get(interaction.guild.default_role, discord.PermissionOverwrite())
+        everyone_overwrite.send_messages = None
+        overwrites[interaction.guild.default_role] = everyone_overwrite
+
+        await channel.edit(overwrites=overwrites)
         
-        await interaction.followup.send(f"✅ User ID `{target_id}` has been successfully unbanned and removed from the database.", ephemeral=True)
-    except discord.NotFound:
-        await interaction.followup.send(f"⚠️ ID removed from database, but user was not banned on this server.", ephemeral=True)
+        embed = discord.Embed(title="🔓 Channel Unlocked", description="This channel is now unlocked. Everyone can type again.", color=discord.Color.green())
+        await channel.send(embed=embed)
+        
+        log_embed = discord.Embed(title="🔓 Channel Unlocked", color=discord.Color.green())
+        log_embed.add_field(name="Channel", value=channel.mention, inline=True)
+        log_embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
+        await send_log(log_embed)
+
+        await interaction.followup.send(f"✅ {channel.mention} has been successfully unlocked.", ephemeral=True)
     except discord.Forbidden:
-        await interaction.followup.send("❌ Bot lacks permission to unban this user.", ephemeral=True)
+        await interaction.followup.send("❌ Bot lacks permission to manage channel permissions.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
 
 @bot.tree.command(name="autolog", description="Select an existing channel to start logging server actions.")
 @is_owner_id()
@@ -420,12 +454,18 @@ async def sync_commands(ctx):
         return
 
     guild = discord.Object(id=GUILD_ID)
-    await ctx.send("🔄 Syncing slash commands specifically to this server...")
+    await ctx.send("🧹 **Cleaning old duplicate commands from Discord cache...**")
     try:
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync(guild=None)
+        
         bot.tree.clear_commands(guild=guild)
+        await bot.tree.sync(guild=guild)
+        
         bot.tree.copy_global_to(guild=guild)
         await bot.tree.sync(guild=guild)
-        await ctx.send("✅ Synced successfully! Please restart your Discord app (Ctrl+R) if commands don't show up immediately.")
+        
+        await ctx.send("✨ **Database wiped and freshly synced!** All duplicates removed. Please restart Discord (Ctrl+R).")
     except Exception as e:
         await ctx.send(f"❌ Sync failed: {e}")
 
