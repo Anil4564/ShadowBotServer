@@ -1,1 +1,2 @@
-ShadowBotVerify.py
+discord.py
+Flask
