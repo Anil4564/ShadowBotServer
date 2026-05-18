@@ -449,26 +449,26 @@ async def on_message(message):
 
 @bot.command(name="sync")
 async def sync_commands(ctx):
-    if ctx.author.id != SPECIAL_OWNER_ID:
+    # ID kontrolünü garantiye almak için stringe çevirip bakıyoruz
+    if str(ctx.author.id) != str(SPECIAL_OWNER_ID):
         await ctx.send("❌ You are not authorized to use this command!")
         return
 
-    guild = discord.Object(id=GUILD_ID)
-    await ctx.send("🧹 **Cleaning old duplicate commands from Discord cache...**")
+    # ID'yi garantiye almak için doğrudan metin üzerinden nesneye çeviriyoruz
+    guild = discord.Object(id=1496194010187042889)
+    await ctx.send("🔄 **Syncing slash commands directly to this server...**")
     try:
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync(guild=None)
-        
+        # Önce bu sunucunun ağacını tamamen temizle (Eski kalıntıları siler)
         bot.tree.clear_commands(guild=guild)
         await bot.tree.sync(guild=guild)
         
+        # Şimdi globaldeki komut yapısını bu sunucunun üzerine zorla yaz
         bot.tree.copy_global_to(guild=guild)
         await bot.tree.sync(guild=guild)
         
-        await ctx.send("✨ **Database wiped and freshly synced!** All duplicates removed. Please restart Discord (Ctrl+R).")
+        await ctx.send("✅ **Direct server sync complete!** Please restart Discord (Ctrl+R) or change your channel to refresh the slash menu.")
     except Exception as e:
         await ctx.send(f"❌ Sync failed: {e}")
-
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CheckFailure):
