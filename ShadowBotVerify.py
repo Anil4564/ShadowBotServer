@@ -1,4 +1,6 @@
 import discord
+import datetime
+import re
 from discord import app_commands
 from discord.ext import commands
 import asyncio
@@ -61,6 +63,79 @@ def remove_banned_user(user_id):
         del banned[user_id]
         save_all_banned_users(banned)
 
+# ==========================================
+# BUTTON VE PANEL GÖRÜNÜMLERİ (VIEWS)
+# ==========================================
+class VerifyView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None) # Kalıcı buton
+
+    @discord.ui.button(label="Verify", style=discord.ButtonStyle.green, custom_id="persistent_verify_button", emoji="✅")
+    async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        role = discord.utils.get(interaction.guild.roles, name="Member")
+        if not role:
+            await interaction.response.send_message("❌ 'Member' role could not be found! Please notify the administration.", ephemeral=True)
+            return
+        
+        if role in interaction.user.roles:
+            await interaction.response.send_message("⚠️ You are already verified!", ephemeral=True)
+            return
+
+        try:
+            await interaction.user.add_roles(role)
+            await interaction.response.send_message("✅ Verification successful! Welcome to the server.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ The bot lacks permission to assign roles. Check the role hierarchy.", ephemeral=True)
+
+class TicketCloseView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red, custom_id="persistent_ticket_close", emoji="🔒")
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.channel.name.startswith("ticket-"):
+            await interaction.response.send_message("🔒 This ticket will be closed and deleted in 5 seconds...", ephemeral=False)
+            await asyncio.sleep(5)
+            await interaction.channel.delete()
+        else:
+            await interaction.response.send_message("❌ This command can only be executed within a ticket channel.", ephemeral=True)
+
+class TicketOpenView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Open Ticket", style=discord.ButtonStyle.blurple, custom_id="persistent_ticket_open", emoji="📩")
+    async def open_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = interaction.guild
+        member = interaction.user
+
+        ticket_channel_name = f"ticket-{member.name.lower()}".replace(" ", "-")
+        existing_channel = discord.utils.get(guild.channels, name=ticket_channel_name)
+        
+        if existing_channel: 
+            await interaction.response.send_message(f"⚠️ You already have an open support ticket: {existing_channel.mention}", ephemeral=True)
+            return
+            
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            member: discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True, attach_files=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
+        }
+        
+        try:
+            ticket_channel = await guild.create_text_channel(name=ticket_channel_name, overwrites=overwrites)
+            
+            embed = discord.Embed(
+                title="✨ Support Ticket Created", 
+                description=f"Welcome {member.mention}, our support team will be with you shortly.\n\nIf you want to close this ticket, click the red button below.", 
+                color=discord.Color.green()
+            )
+            await ticket_channel.send(embed=embed, view=TicketCloseView())
+            await interaction.response.send_message(f"✅ Your ticket has been created: {ticket_channel.mention}", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Failed to create ticket channel: {e}", ephemeral=True)
+
+
 class ShadowBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -72,6 +147,11 @@ class ShadowBot(commands.Bot):
         super().__init__(command_prefix="s!", intents=intents)
 
     async def setup_hook(self):
+        # Bot kapansa bile butonların çalışmaya devam etmesi için görünümleri kaydediyoruz
+        self.add_view(VerifyView())
+        self.add_view(TicketOpenView())
+        self.add_view(TicketCloseView())
+        
         print(f"[{self.user.name}] Bot initialized. Use s!sync in your server to register slash commands.")
         self.loop.create_task(self.check_expired_bans())
 
@@ -171,6 +251,81 @@ async def on_message_edit(before, after):
     await send_log(embed)
 
 # ==========================================
+# MESAJ KONTROLLERİ (TEK BİR FONKSİYONDA BİRLEŞTİRİLDİ)
+# ==========================================
+@bot.event
+async def on_message(message):
+    global scam_trap_channel_id
+    if message.author.bot or message.guild is None: return
+
+    # Yetkili Rol Kontrolü
+    allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
+    is_staff_member = any(role.name in allowed_roles for role in message.author.roles) or message.author.id == message.guild.owner_id
+
+    # --- 1. HONEYPOT TRAP CHECK ---
+    if scam_trap_channel_id and message.channel.id == scam_trap_channel_id:
+        if not is_staff_member:
+            try:
+                await message.delete()
+                save_banned_user(message.author.id)
+                await message.author.ban(reason="Shadow Anti-Scam: Honeypot trap.")
+                return
+            except: pass
+
+    # --- 2. LINK BLOCK SYSTEM ---
+    if not is_staff_member:
+        link_match = re.search(r'(https?://[^\s]+)|(discord\.gg/[^\s]+)', message.content.lower())
+        if link_match:
+            try:
+                await message.delete()
+                warn_msg = await message.channel.send(f"⚠️ {message.author.mention}, sharing links is strictly prohibited in this server!")
+                
+                embed = discord.Embed(title="🛡️ Link Blocked", color=discord.Color.orange())
+                embed.add_field(name="User", value=f"{message.author.mention} ({message.author.id})", inline=True)
+                embed.add_field(name="Channel", value=message.channel.mention, inline=True)
+                embed.add_field(name="Content", value=f"||{message.content}||", inline=False)
+                await send_log(embed)
+                
+                await asyncio.sleep(5)
+                await warn_msg.delete()
+                return
+            except: pass
+
+    await bot.process_commands(message)
+    
+@bot.tree.command(name="timeout", description="Mutes a member for a specified duration using Discord Timeout.")
+@is_staff()
+@app_commands.describe(user="The member to mute", minutes="Duration in minutes", reason="Reason for the timeout")
+async def assignment_timeout(interaction: discord.Interaction, user: discord.Member, minutes: int, reason: str = "No reason provided"):
+    await interaction.response.defer(ephemeral=True)
+
+    if user.id == interaction.user.id:
+        await interaction.followup.send("❌ You cannot timeout yourself.", ephemeral=True)
+        return
+
+    if minutes < 1 or minutes > 40320:
+        await interaction.followup.send("❌ Please enter a duration between 1 minute and 28 days (40320 minutes).", ephemeral=True)
+        return
+
+    duration = datetime.timedelta(minutes=minutes)
+    
+    try:
+        await user.timeout(duration, reason=f"Moderator: {interaction.user.name} | Reason: {reason}")
+        
+        embed = discord.Embed(title="🤫 User Timed Out", color=discord.Color.orange())
+        embed.add_field(name="Target User", value=f"{user.mention} ({user.id})", inline=True)
+        embed.add_field(name="Duration", value=f"`{minutes} Minutes`", inline=True)
+        embed.add_field(name="Moderator", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        await send_log(embed)
+
+        await interaction.followup.send(f"✅ **{user.name}** has been successfully timed out for `{minutes}` minutes.", ephemeral=False)
+    except discord.Forbidden:
+        await interaction.followup.send("❌ The bot lacks permission to timeout this member (Role hierarchy issue).", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
+
+# ==========================================
 # 🛡️ OTO-TEKRAR BAN SİSTEMİ (AUTO-REBAN)
 # ==========================================
 @bot.event
@@ -258,33 +413,25 @@ async def assignment_channellock(interaction: discord.Interaction, channel: disc
     allowed_staff_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
     
     try:
-        # Kanaldaki mevcut tüm rol izinlerini alıyoruz
         overwrites = channel.overwrites
         
-        # Sunucunun tüm rollerini tarayıp staff hariç olanların mesaj yetkisini kapatıyoruz
         for role in interaction.guild.roles:
             if role.name in allowed_staff_roles or role.managed:
-                # Muaf olan roller ve bot entegrasyon rollerine dokunma
                 continue
             
-            # Rolün kanaldaki mevcut izin durumunu çek ya da yeni oluştur
             current_overwrite = overwrites.get(role, discord.PermissionOverwrite())
-            current_overwrite.send_messages = False # Mesaj yazmayı engelle
+            current_overwrite.send_messages = False 
             overwrites[role] = current_overwrite
             
-        # @everyone (Herkes) rolünü de garantiye almak için kapatıyoruz
         everyone_overwrite = overwrites.get(interaction.guild.default_role, discord.PermissionOverwrite())
         everyone_overwrite.send_messages = False
         overwrites[interaction.guild.default_role] = everyone_overwrite
 
-        # Değişiklikleri kanala uygula
         await channel.edit(overwrites=overwrites)
         
-        # Kanala kilitlendi mesajı at
         embed = discord.Embed(title="🔒 Channel Locked", description="This channel has been locked by staff. Regular members cannot type.", color=discord.Color.red())
         await channel.send(embed=embed)
         
-        # Log Bildirimi
         log_embed = discord.Embed(title="🔒 Channel Locked", color=discord.Color.red())
         log_embed.add_field(name="Channel", value=channel.mention, inline=True)
         log_embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
@@ -312,7 +459,7 @@ async def assignment_channelunlock(interaction: discord.Interaction, channel: di
                 continue
             
             current_overwrite = overwrites.get(role, discord.PermissionOverwrite())
-            current_overwrite.send_messages = None # İzni nötrle/varsayılana çek (kilit kalksın)
+            current_overwrite.send_messages = None 
             overwrites[role] = current_overwrite
             
         everyone_overwrite = overwrites.get(interaction.guild.default_role, discord.PermissionOverwrite())
@@ -364,20 +511,29 @@ async def assignment_antiscam(interaction: discord.Interaction, channel: discord
     await channel.send(embed=embed)
     await interaction.followup.send("✅ Anti-Scam setup done.", ephemeral=True)
 
-@bot.tree.command(name="setup_verify", description="Sets up verification.")
+@bot.tree.command(name="setup_verify", description="Sets up the verification system with a persistent button.")
 @is_staff()
 async def assignment_kurulum(interaction: discord.Interaction):
-    await interaction.response.send_message("Sending...", ephemeral=True)
-    message = await interaction.channel.send("React ✅ to get verified")
-    await message.add_reaction("✅")
+    await interaction.response.send_message("🔄 Sending verification panel...", ephemeral=True)
+    
+    embed = discord.Embed(
+        title="🔐 Server Verification", 
+        description="Click the button below to complete your verification and gain access to the rest of the server.", 
+        color=discord.Color.blue()
+    )
+    await interaction.channel.send(embed=embed, view=VerifyView())
 
-@bot.tree.command(name="setup_ticket", description="Sets up tickets.")
+@bot.tree.command(name="setup_ticket", description="Sets up the ticket system with a persistent button.")
 @is_staff()
 async def assignment_ticketkurulum(interaction: discord.Interaction):
-    await interaction.response.send_message("Sending...", ephemeral=True)
-    embed = discord.Embed(title="Support Ticket", description="Click 📩 to open a ticket.", color=discord.Color.gold())
-    message = await interaction.channel.send(embed=embed)
-    await message.add_reaction("📩")
+    await interaction.response.send_message("🔄 Setting up support panel...", ephemeral=True)
+    
+    embed = discord.Embed(
+        title="📩 Support & Inquiry", 
+        description="If you have a complaint, suggestion, or require assistance, click the button below to open a support ticket.", 
+        color=discord.Color.gold()
+    )
+    await interaction.channel.send(embed=embed, view=TicketOpenView())
 
 @bot.tree.command(name="close", description="Closes ticket.")
 @is_staff()
@@ -387,88 +543,25 @@ async def assignment_close(interaction: discord.Interaction):
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
-# ==========================================
-# EVENT LISTENERS
-# ==========================================
-@bot.event
-async def on_raw_reaction_add(payload):
-    if payload.user_id == bot.user.id: return
-    guild = bot.get_guild(payload.guild_id)
-    if not guild: return
-    member = guild.get_member(payload.user_id)
-    if not member: return
-
-    # VERIFICATION SYSTEM
-    if str(payload.emoji) == "✅":
-        role = discord.utils.get(guild.roles, name="Member")
-        if role: 
-            await member.add_roles(role)
-        try:
-            channel = bot.get_channel(payload.channel_id)
-            message = await channel.fetch_message(payload.message_id)
-            await message.remove_reaction(payload.emoji, member)
-        except: pass
-
-    # TICKET SYSTEM
-    elif str(payload.emoji) == "📩":
-        try:
-            channel = bot.get_channel(payload.channel_id)
-            message = await channel.fetch_message(payload.message_id)
-            await message.remove_reaction(payload.emoji, member)
-        except: pass
-
-        ticket_channel_name = f"ticket-{member.name.lower()}".replace(" ", "-")
-        existing_channel = discord.utils.get(guild.channels, name=ticket_channel_name)
-        if existing_channel: 
-            return
-            
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            member: discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
-        }
-        
-        ticket_channel = await guild.create_text_channel(name=ticket_channel_name, overwrites=overwrites)
-        await ticket_channel.send(f"Welcome {member.mention}, staff will be with you shortly. Use `/close` to close this ticket.")
-
-@bot.event
-async def on_message(message):
-    global scam_trap_channel_id
-    if message.author.bot or message.guild is None: return
-    if scam_trap_channel_id and message.channel.id == scam_trap_channel_id:
-        allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
-        is_staff_member = any(role.name in allowed_roles for role in message.author.roles) or message.author.id == message.guild.owner_id
-        if not is_staff_member:
-            try:
-                await message.delete()
-                save_banned_user(message.author.id)
-                await message.author.ban(reason="Shadow Anti-Scam: Honeypot trap.")
-                return
-            except: pass
-    await bot.process_commands(message)
-
 @bot.command(name="sync")
 async def sync_commands(ctx):
-    # ID kontrolünü garantiye almak için stringe çevirip bakıyoruz
     if str(ctx.author.id) != str(SPECIAL_OWNER_ID):
         await ctx.send("❌ You are not authorized to use this command!")
         return
 
-    # ID'yi garantiye almak için doğrudan metin üzerinden nesneye çeviriyoruz
-    guild = discord.Object(id=1496194010187042889)
+    guild = discord.Object(id=GUILD_ID)
     await ctx.send("🔄 **Syncing slash commands directly to this server...**")
     try:
-        # Önce bu sunucunun ağacını tamamen temizle (Eski kalıntıları siler)
         bot.tree.clear_commands(guild=guild)
         await bot.tree.sync(guild=guild)
         
-        # Şimdi globaldeki komut yapısını bu sunucunun üzerine zorla yaz
         bot.tree.copy_global_to(guild=guild)
         await bot.tree.sync(guild=guild)
         
         await ctx.send("✅ **Direct server sync complete!** Please restart Discord (Ctrl+R) or change your channel to refresh the slash menu.")
     except Exception as e:
         await ctx.send(f"❌ Sync failed: {e}")
+
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CheckFailure):
