@@ -383,7 +383,7 @@ async def assignment_ticketkurulum(interaction: discord.Interaction):
 @is_staff()
 async def assignment_close(interaction: discord.Interaction):
     if interaction.channel.name.startswith("ticket-"):
-        await interaction.response.send_message("Closing in 5s...", ephemeral=True)
+        await interaction.response.send_message("Closing in 5s...", ephemeral=False)
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
