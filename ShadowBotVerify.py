@@ -23,7 +23,9 @@ def run():
 # SUNUCU ID VE ÖZEL YETKİLİ KULLANICI ID
 GUILD_ID = 1496194010187042889 
 SPECIAL_OWNER_ID = 1424590067577655358
-BAN_FILE = "banned_users.txt"
+
+# Render Kalıcı Disk (Persistent Disk) için dosya yolu güncellendi
+BAN_FILE = "/data/banned_users.txt"
 
 def load_banned_users():
     if not os.path.exists(BAN_FILE):
@@ -44,6 +46,8 @@ def load_banned_users():
     return banned_dict
 
 def save_all_banned_users(banned_dict):
+    # Dosyanın yazılacağı /data klasörü yoksa otomatik oluşturur
+    os.makedirs(os.path.dirname(BAN_FILE), exist_ok=True)
     with open(BAN_FILE, "w") as f:
         for uid, expire in banned_dict.items():
             f.write(f"{uid}|{expire}\n")
@@ -217,6 +221,28 @@ async def send_log(embed):
         channel = bot.get_channel(log_channel_id)
         if channel:
             await channel.send(embed=embed)
+
+@bot.tree.command(name="check-ban-file", description="Banned users dosyasının içeriğini gösterir.")
+@is_owner_id()
+async def assignment_checkbanfile(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not os.path.exists(BAN_FILE):
+        await interaction.followup.send("❌ Dosya henüz oluşturulmamış (Henüz kimse banlanmadı).", ephemeral=True)
+        return
+        
+    with open(BAN_FILE, "r") as f:
+        content = f.read()
+        
+    if not content.strip():
+        await interaction.followup.send("📂 Dosya mevcut ama içi tamamen boş.", ephemeral=True)
+        return
+        
+    # Eğer dosya çok uzunsa Discord mesaj sınırına takılmasın diye dosya olarak gönderiyoruz
+    with open("temp_show.txt", "w") as tf:
+        tf.write(content)
+        
+    await interaction.followup.send("📂 Güncel ban dosyası ektedir:", file=discord.File("temp_show.txt"), ephemeral=True)
+    os.remove("temp_show.txt")
 
 # ==========================================
 # Gelişmiş Log Sistemi
