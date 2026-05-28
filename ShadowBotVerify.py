@@ -63,12 +63,16 @@ def remove_banned_user(user_id):
         del banned[user_id]
         save_all_banned_users(banned)
 
+# Toplam banlanan (tuzağa düşen) hesap sayısını dosyadan çeker
+def get_total_bans():
+    return len(load_banned_users())
+
 # ==========================================
 # BUTTON VE PANEL GÖRÜNÜMLERİ (VIEWS)
 # ==========================================
 class VerifyView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None) # Kalıcı buton
+        super().__init__(timeout=None)
 
     @discord.ui.button(label="Verify", style=discord.ButtonStyle.green, custom_id="persistent_verify_button", emoji="✅")
     async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -147,7 +151,6 @@ class ShadowBot(commands.Bot):
         super().__init__(command_prefix="s!", intents=intents)
 
     async def setup_hook(self):
-        # Bot kapansa bile butonların çalışmaya devam etmesi için görünümleri kaydediyoruz
         self.add_view(VerifyView())
         self.add_view(TicketOpenView())
         self.add_view(TicketCloseView())
@@ -193,13 +196,11 @@ async def on_ready():
     print(f"Bot successfully logged in as: {bot.user.name}")
     print("--------------------------------------------")
 
-# SADECE ÖZEL ID İÇİN KONTROL
 def is_owner_id():
     def predicate(interaction: discord.Interaction) -> bool:
         return interaction.user.id == SPECIAL_OWNER_ID
     return app_commands.check(predicate)
 
-# STAFF PERMISSION CHECK
 def is_staff():
     def predicate(interaction: discord.Interaction) -> bool:
         allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
@@ -209,7 +210,6 @@ def is_staff():
         return False
     return app_commands.check(predicate)
 
-# LOG GÖNDERME YARDIMCISI
 async def send_log(embed):
     global log_channel_id
     if log_channel_id:
@@ -251,26 +251,42 @@ async def on_message_edit(before, after):
     await send_log(embed)
 
 # ==========================================
-# MESAJ KONTROLLERİ (TEK BİR FONKSİYONDA BİRLEŞTİRİLDİ)
+# MESAJ KONTROLLERİ (BALIK TUZAĞI BURADA)
 # ==========================================
 @bot.event
 async def on_message(message):
     global scam_trap_channel_id
     if message.author.bot or message.guild is None: return
 
-    # Yetkili Rol Kontrolü
     allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
     is_staff_member = any(role.name in allowed_roles for role in message.author.roles) or message.author.id == message.guild.owner_id
 
-    # --- 1. HONEYPOT TRAP CHECK ---
+    # --- 1. HONEYPOT TRAP CHECK (SCAMMER YAKALAYICI) ---
     if scam_trap_channel_id and message.channel.id == scam_trap_channel_id:
         if not is_staff_member:
             try:
+                # Önce scammerın attığı pisliği temizle
                 await message.delete()
+                
+                # Kara listeye kaydet ve sunucudan uçur
                 save_banned_user(message.author.id)
                 await message.author.ban(reason="Shadow Anti-Scam: Honeypot trap.")
+                
+                # Güncel Kicks (Ban) sayısını al
+                current_kicks = get_total_bans()
+                
+                # Tam istediğin formatta yeni embed mesajını kanala fırlat
+                scam_embed = discord.Embed(
+                    title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️",
+                    description="Any message sent here results in an instant ban.",
+                    color=discord.Color.red()
+                )
+                scam_embed.add_field(name="📊 Kicks", value=f"`{current_kicks}`", inline=False)
+                
+                await message.channel.send(embed=scam_embed)
                 return
-            except: pass
+            except Exception as e:
+                print(f"[ShadowBot] Honeypot hata: {e}")
 
     # --- 2. LINK BLOCK SYSTEM ---
     if not is_staff_member:
@@ -409,12 +425,10 @@ async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
 @app_commands.describe(channel="Select the text channel to lock")
 async def assignment_channellock(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
-    
     allowed_staff_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
     
     try:
         overwrites = channel.overwrites
-        
         for role in interaction.guild.roles:
             if role.name in allowed_staff_roles or role.managed:
                 continue
@@ -448,12 +462,10 @@ async def assignment_channellock(interaction: discord.Interaction, channel: disc
 @app_commands.describe(channel="Select the text channel to unlock")
 async def assignment_channelunlock(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
-    
     allowed_staff_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
     
     try:
         overwrites = channel.overwrites
-        
         for role in interaction.guild.roles:
             if role.name in allowed_staff_roles or role.managed:
                 continue
@@ -506,8 +518,17 @@ async def assignment_unlog(interaction: discord.Interaction):
 async def assignment_antiscam(interaction: discord.Interaction, channel: discord.TextChannel):
     global scam_trap_channel_id
     await interaction.response.defer(ephemeral=True)
+    
     scam_trap_channel_id = channel.id
-    embed = discord.Embed(title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️", description="Any message sent here results in an instant ban.", color=discord.Color.red())
+    
+    # Kanal ilk kurulduğunda Kicks: 0 veya güncel veri sayısıyla sabit bir başlangıç uyarısı atar
+    embed = discord.Embed(
+        title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️", 
+        description="Any message sent here results in an instant ban.", 
+        color=discord.Color.red()
+    )
+    embed.add_field(name="📊 Kicks", value=f"`{get_total_bans()}`", inline=False)
+    
     await channel.send(embed=embed)
     await interaction.followup.send("✅ Anti-Scam setup done.", ephemeral=True)
 
