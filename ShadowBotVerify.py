@@ -46,7 +46,6 @@ def load_banned_users():
     return banned_dict
 
 def save_all_banned_users(banned_dict):
-    # Dosyanın yazılacağı /data klasörü yoksa otomatik oluşturur
     os.makedirs(os.path.dirname(BAN_FILE), exist_ok=True)
     with open(BAN_FILE, "w") as f:
         for uid, expire in banned_dict.items():
@@ -67,7 +66,6 @@ def remove_banned_user(user_id):
         del banned[user_id]
         save_all_banned_users(banned)
 
-# Toplam banlanan (tuzağa düşen) hesap sayısını dosyadan çeker
 def get_total_bans():
     return len(load_banned_users())
 
@@ -193,7 +191,7 @@ class ShadowBot(commands.Bot):
 bot = ShadowBot()
 active_countdown_tasks = {}
 scam_trap_channel_id = None
-scam_panel_message_id = None  # Güncellenecek mesajın ID'sini tutmak için değişken
+scam_panel_message_id = None  
 log_channel_id = None  
 
 @bot.event
@@ -237,7 +235,6 @@ async def assignment_checkbanfile(interaction: discord.Interaction):
         await interaction.followup.send("📂 Dosya mevcut ama içi tamamen boş.", ephemeral=True)
         return
         
-    # Eğer dosya çok uzunsa Discord mesaj sınırına takılmasın diye dosya olarak gönderiyoruz
     with open("temp_show.txt", "w") as tf:
         tf.write(content)
         
@@ -278,7 +275,7 @@ async def on_message_edit(before, after):
     await send_log(embed)
 
 # ==========================================
-# MESAJ KONTROLLERİ (SCAM PANALİNİ EDİTLEYEN KISIM)
+# MESAJ KONTROLLERİ
 # ==========================================
 @bot.event
 async def on_message(message):
@@ -288,18 +285,13 @@ async def on_message(message):
     allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
     is_staff_member = any(role.name in allowed_roles for role in message.author.roles) or message.author.id == message.guild.owner_id
 
-    # --- 1. HONEYPOT TRAP CHECK ---
     if scam_trap_channel_id and message.channel.id == scam_trap_channel_id:
         if not is_staff_member:
             try:
-                # Scammerın attığı mesajı hemen yok et
                 await message.delete()
-                
-                # Veritabanına kaydet ve sunucudan banla
                 save_banned_user(message.author.id)
                 await message.author.ban(reason="Shadow Anti-Scam: Honeypot trap.")
                 
-                # Mevcut panel mesajını bulup EDİTLE (Yeni mesaj atmaz, eskisini değiştirir)
                 if scam_panel_message_id:
                     try:
                         panel_msg = await message.channel.fetch_message(scam_panel_message_id)
@@ -311,7 +303,6 @@ async def on_message(message):
                         updated_embed.add_field(name="📊 Kicks", value=f"`{get_total_bans()}`", inline=False)
                         await panel_msg.edit(embed=updated_embed)
                     except discord.NotFound:
-                        # Eğer mesaj bir şekilde silindiyse yenisini atsın ve ID'yi güncellesin
                         new_embed = discord.Embed(
                             title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️",
                             description="Any message sent here results in an instant ban.",
@@ -324,7 +315,6 @@ async def on_message(message):
             except Exception as e:
                 print(f"[ShadowBot] Honeypot hata: {e}")
 
-    # --- 2. LINK BLOCK SYSTEM ---
     if not is_staff_member:
         link_match = re.search(r'(https?://[^\s]+)|(discord\.gg/[^\s]+)', message.content.lower())
         if link_match:
@@ -401,7 +391,7 @@ async def on_member_join(member):
 # ==========================================
 @bot.tree.command(name="ban-user", description="Bans a user and locks them from rejoining. (0 for Lifetime)")
 @is_staff()
-@app_commands.describe(user="The user to ban", days="Ban duration in days (Use 0 for Lifetime/Kalıcı)", reason="Reason for the ban")
+@app_commands.describe(user="The user to ban", days="Ban duration in days (Use 0 for Lifetime)", reason="Reason for the ban")
 async def assignment_banuser(interaction: discord.Interaction, user: discord.User, days: int, reason: str = "No reason provided"):
     await interaction.response.defer(ephemeral=True)
     
@@ -422,7 +412,6 @@ async def assignment_banuser(interaction: discord.Interaction, user: discord.Use
         embed.add_field(name="Reason", value=reason, inline=False)
         await send_log(embed)
         
-        # Eğer manuel panel yüklüyse ve kurulduysa onu da senkronize güncelle
         global scam_trap_channel_id, scam_panel_message_id
         if scam_trap_channel_id and scam_panel_message_id:
             try:
@@ -461,7 +450,6 @@ async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
         embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
         await send_log(embed)
         
-        # Kaldırıldığında paneli güncelle
         global scam_trap_channel_id, scam_panel_message_id
         if scam_trap_channel_id and scam_panel_message_id:
             try:
@@ -579,7 +567,6 @@ async def assignment_antiscam(interaction: discord.Interaction, channel: discord
     
     scam_trap_channel_id = channel.id
     
-    # Başlangıçta Kicks bilgisini içeren ana embed mesajını gönderiyoruz ve ID'sini kaydediyoruz
     embed = discord.Embed(
         title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️", 
         description="Any message sent here results in an instant ban.", 
@@ -588,7 +575,7 @@ async def assignment_antiscam(interaction: discord.Interaction, channel: discord
     embed.add_field(name="📊 Kicks", value=f"`{get_total_bans()}`", inline=False)
     
     panel_msg = await channel.send(embed=embed)
-    scam_panel_message_id = panel_msg.id  # Mesajın benzersiz kimliğini saklıyoruz
+    scam_panel_message_id = panel_msg.id  
     
     await interaction.followup.send("✅ Anti-Scam setup done.", ephemeral=True)
 
@@ -624,9 +611,15 @@ async def assignment_close(interaction: discord.Interaction):
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
+# --- GÜNCELLENEN S!SYNC KOMUTU ---
 @bot.command(name="sync")
 async def sync_commands(ctx):
-    if str(ctx.author.id) != str(SPECIAL_OWNER_ID):
+    # Kullanıcının rolleri arasında "Owner" adı var mı diye kontrol et
+    user_roles = [role.name for role in ctx.author.roles]
+    is_server_owner = ctx.author.id == ctx.guild.owner_id
+    
+    # Eğer id senin id'n DEĞİLSE, kurucu DEĞİLSE ve rolü "Owner" DEĞİLSE reddet
+    if ctx.author.id != SPECIAL_OWNER_ID and not is_server_owner and "Owner" not in user_roles:
         await ctx.send("❌ You are not authorized to use this command!")
         return
 
