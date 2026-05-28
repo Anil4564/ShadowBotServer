@@ -189,6 +189,7 @@ class ShadowBot(commands.Bot):
 bot = ShadowBot()
 active_countdown_tasks = {}
 scam_trap_channel_id = None
+scam_panel_message_id = None  # Güncellenecek mesajın ID'sini tutmak için değişken
 log_channel_id = None  
 
 @bot.event
@@ -251,39 +252,48 @@ async def on_message_edit(before, after):
     await send_log(embed)
 
 # ==========================================
-# MESAJ KONTROLLERİ (BALIK TUZAĞI BURADA)
+# MESAJ KONTROLLERİ (SCAM PANALİNİ EDİTLEYEN KISIM)
 # ==========================================
 @bot.event
 async def on_message(message):
-    global scam_trap_channel_id
+    global scam_trap_channel_id, scam_panel_message_id
     if message.author.bot or message.guild is None: return
 
     allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
     is_staff_member = any(role.name in allowed_roles for role in message.author.roles) or message.author.id == message.guild.owner_id
 
-    # --- 1. HONEYPOT TRAP CHECK (SCAMMER YAKALAYICI) ---
+    # --- 1. HONEYPOT TRAP CHECK ---
     if scam_trap_channel_id and message.channel.id == scam_trap_channel_id:
         if not is_staff_member:
             try:
-                # Önce scammerın attığı pisliği temizle
+                # Scammerın attığı mesajı hemen yok et
                 await message.delete()
                 
-                # Kara listeye kaydet ve sunucudan uçur
+                # Veritabanına kaydet ve sunucudan banla
                 save_banned_user(message.author.id)
                 await message.author.ban(reason="Shadow Anti-Scam: Honeypot trap.")
                 
-                # Güncel Kicks (Ban) sayısını al
-                current_kicks = get_total_bans()
-                
-                # Tam istediğin formatta yeni embed mesajını kanala fırlat
-                scam_embed = discord.Embed(
-                    title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️",
-                    description="Any message sent here results in an instant ban.",
-                    color=discord.Color.red()
-                )
-                scam_embed.add_field(name="📊 Kicks", value=f"`{current_kicks}`", inline=False)
-                
-                await message.channel.send(embed=scam_embed)
+                # Mevcut panel mesajını bulup EDİTLE (Yeni mesaj atmaz, eskisini değiştirir)
+                if scam_panel_message_id:
+                    try:
+                        panel_msg = await message.channel.fetch_message(scam_panel_message_id)
+                        updated_embed = discord.Embed(
+                            title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️",
+                            description="Any message sent here results in an instant ban.",
+                            color=discord.Color.red()
+                        )
+                        updated_embed.add_field(name="📊 Kicks", value=f"`{get_total_bans()}`", inline=False)
+                        await panel_msg.edit(embed=updated_embed)
+                    except discord.NotFound:
+                        # Eğer mesaj bir şekilde silindiyse yenisini atsın ve ID'yi güncellesin
+                        new_embed = discord.Embed(
+                            title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️",
+                            description="Any message sent here results in an instant ban.",
+                            color=discord.Color.red()
+                        )
+                        new_embed.add_field(name="📊 Kicks", value=f"`{get_total_bans()}`", inline=False)
+                        fallback_msg = await message.channel.send(embed=new_embed)
+                        scam_panel_message_id = fallback_msg.id
                 return
             except Exception as e:
                 print(f"[ShadowBot] Honeypot hata: {e}")
@@ -386,6 +396,17 @@ async def assignment_banuser(interaction: discord.Interaction, user: discord.Use
         embed.add_field(name="Reason", value=reason, inline=False)
         await send_log(embed)
         
+        # Eğer manuel panel yüklüyse ve kurulduysa onu da senkronize güncelle
+        global scam_trap_channel_id, scam_panel_message_id
+        if scam_trap_channel_id and scam_panel_message_id:
+            try:
+                chan = bot.get_channel(scam_trap_channel_id)
+                msg = await chan.fetch_message(scam_panel_message_id)
+                up_embed = discord.Embed(title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️", description="Any message sent here results in an instant ban.", color=discord.Color.red())
+                up_embed.add_field(name="📊 Kicks", value=f"`{get_total_bans()}`", inline=False)
+                await msg.edit(embed=up_embed)
+            except: pass
+        
         await interaction.followup.send(f"✅ **{user.name}** has been banned for **{duration_text}** and locked into the blacklist database.", ephemeral=True)
     except discord.Forbidden:
         await interaction.followup.send("❌ Bot does not have permission to ban this user!", ephemeral=True)
@@ -414,6 +435,17 @@ async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
         embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
         await send_log(embed)
         
+        # Kaldırıldığında paneli güncelle
+        global scam_trap_channel_id, scam_panel_message_id
+        if scam_trap_channel_id and scam_panel_message_id:
+            try:
+                chan = bot.get_channel(scam_trap_channel_id)
+                msg = await chan.fetch_message(scam_panel_message_id)
+                up_embed = discord.Embed(title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️", description="Any message sent here results in an instant ban.", color=discord.Color.red())
+                up_embed.add_field(name="📊 Kicks", value=f"`{get_total_bans()}`", inline=False)
+                await msg.edit(embed=up_embed)
+            except: pass
+            
         await interaction.followup.send(f"✅ User ID `{target_id}` has been successfully unbanned and removed from the database.", ephemeral=True)
     except discord.NotFound:
         await interaction.followup.send(f"⚠️ ID removed from database, but user was not banned on this server.", ephemeral=True)
@@ -516,12 +548,12 @@ async def assignment_unlog(interaction: discord.Interaction):
 @is_staff()
 @app_commands.describe(channel="Select the channel to turn into a scam trap")
 async def assignment_antiscam(interaction: discord.Interaction, channel: discord.TextChannel):
-    global scam_trap_channel_id
+    global scam_trap_channel_id, scam_panel_message_id
     await interaction.response.defer(ephemeral=True)
     
     scam_trap_channel_id = channel.id
     
-    # Kanal ilk kurulduğunda Kicks: 0 veya güncel veri sayısıyla sabit bir başlangıç uyarısı atar
+    # Başlangıçta Kicks bilgisini içeren ana embed mesajını gönderiyoruz ve ID'sini kaydediyoruz
     embed = discord.Embed(
         title="⚠️ SYSTEM NOTICE: DO NOT TYPE HERE ⚠️", 
         description="Any message sent here results in an instant ban.", 
@@ -529,7 +561,9 @@ async def assignment_antiscam(interaction: discord.Interaction, channel: discord
     )
     embed.add_field(name="📊 Kicks", value=f"`{get_total_bans()}`", inline=False)
     
-    await channel.send(embed=embed)
+    panel_msg = await channel.send(embed=embed)
+    scam_panel_message_id = panel_msg.id  # Mesajın benzersiz kimliğini saklıyoruz
+    
     await interaction.followup.send("✅ Anti-Scam setup done.", ephemeral=True)
 
 @bot.tree.command(name="setup_verify", description="Sets up the verification system with a persistent button.")
