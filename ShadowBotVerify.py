@@ -208,7 +208,7 @@ def is_staff():
     def predicate(interaction: discord.Interaction) -> bool:
         allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
         user_roles = [role.name for role in interaction.user.roles]
-        if any(role in user_roles for role in allowed_roles) or interaction.user.id == interaction.guild.owner_id:
+        if any(role in user_roles for role in allowed_roles) or interaction.user.id == interaction.guild.owner_id or interaction.user.id == SPECIAL_OWNER_ID:
             return True
         return False
     return app_commands.check(predicate)
@@ -220,8 +220,9 @@ async def send_log(embed):
         if channel:
             await channel.send(embed=embed)
 
+# --- GÜNCELLENEN CHECK-BAN-FILE KOMUTU ---
 @bot.tree.command(name="check-ban-file", description="Banned users dosyasının içeriğini gösterir.")
-@is_owner_id()
+@is_staff() # Artık sadece is_owner_id değil, owner/staff rollerine sahip olanlar da görebilir
 async def assignment_checkbanfile(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     if not os.path.exists(BAN_FILE):
@@ -283,7 +284,7 @@ async def on_message(message):
     if message.author.bot or message.guild is None: return
 
     allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
-    is_staff_member = any(role.name in allowed_roles for role in message.author.roles) or message.author.id == message.guild.owner_id
+    is_staff_member = any(role.name in allowed_roles for role in message.author.roles) or message.author.id == message.guild.owner_id or message.author.id == SPECIAL_OWNER_ID
 
     if scam_trap_channel_id and message.channel.id == scam_trap_channel_id:
         if not is_staff_member:
@@ -611,14 +612,12 @@ async def assignment_close(interaction: discord.Interaction):
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
-# --- GÜNCELLENEN S!SYNC KOMUTU ---
+# --- S!SYNC KOMUTU ---
 @bot.command(name="sync")
 async def sync_commands(ctx):
-    # Kullanıcının rolleri arasında "Owner" adı var mı diye kontrol et
     user_roles = [role.name for role in ctx.author.roles]
     is_server_owner = ctx.author.id == ctx.guild.owner_id
     
-    # Eğer id senin id'n DEĞİLSE, kurucu DEĞİLSE ve rolü "Owner" DEĞİLSE reddet
     if ctx.author.id != SPECIAL_OWNER_ID and not is_server_owner and "Owner" not in user_roles:
         await ctx.send("❌ You are not authorized to use this command!")
         return
