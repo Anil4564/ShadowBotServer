@@ -252,17 +252,15 @@ async def on_ready():
 
 def is_owner_id():
     def predicate(interaction: discord.Interaction) -> bool:
-        # Sadece senin özel ID'ne izin verir
         return interaction.user.id == SPECIAL_OWNER_ID
     return app_commands.check(predicate)
 
 def is_staff():
     def predicate(interaction: discord.Interaction) -> bool:
-        # Sadece 'Owner' ve 'Mod' rollerine izin verir
-        allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
+        # Sadece 'Mod' ve 'Owner' rollerine yetki verildi
+        allowed_roles = ["Mod", "Owner"]
         user_roles = [role.name for role in interaction.user.roles]
         
-        # Eğer kullanıcı özel ID'ye sahipse, sunucu sahibiyse veya belirtilen rolleri taşıyorsa true döner
         if any(role in user_roles for role in allowed_roles) or interaction.user.id == interaction.guild.owner_id or interaction.user.id == SPECIAL_OWNER_ID:
             return True
         return False
@@ -279,34 +277,28 @@ async def send_log(embed):
 # 🚨 Gelişmiş Anti-Nuke Tetikleyicileri (Eventleri)
 # ==========================================
 
-# 1. Cezalandırma Yardımcı Fonksiyonu
 async def nuke_punish(guild, user_id, action_type):
     try:
         member = await guild.fetch_member(user_id)
         if member.id == guild.owner_id or member.id == SPECIAL_OWNER_ID or member.id == bot.user.id:
-            return # Sunucu sahibini, özel yetkiliyi veya botun kendisini cezalandırma
+            return 
         
-        # Tüm rollerini al (Entegrasyon / Boşta kalan rolleri korumak için hata fırlatabilir, try yapısındadır)
         try:
             await member.edit(roles=[])
         except:
             pass
         
-        # Sunucudan banla ve kara listeye ekle
         save_banned_user(member.id)
         await member.ban(reason=f"Shadow Anti-Nuke: Toplu {action_type} limiti aşıldı!")
         
-        # Log kanallarına bildir
         embed = discord.Embed(title="🚨 ANTI-NUKE SİSTEMİ DEVREDE", color=discord.Color.dark_red())
         embed.description = f"**Zararlı Yetkili Cezalandırıldı!**\n\n**Kullanıcı:** {member.mention} (`{member.id}`)\n**Sebep:** Kısa sürede toplu veya agresif `{action_type}` işlemi gerçekleştirdi.\n**İşlem:** Tüm rolleri alındı ve kalıcı olarak banlandı."
         await send_log(embed)
     except Exception as e:
         print(f"Anti-nuke cezalandırma hatası: {e}")
 
-# 2. Yeni Bot Ekleme Koruması & DM Bildirimi
 @bot.event
 async def on_member_join(member):
-    # Kara liste kontrolü (Mevcut kodun)
     banned_list = load_banned_users()
     if member.id in banned_list:
         try:
@@ -320,7 +312,6 @@ async def on_member_join(member):
         except Exception as e:
             print(f"[ShadowBot] Failed to auto-reban {member.id}: {e}")
 
-    # --- YENİ BOT KATILIM KONTROLÜ VE DM BİLDİRİMİ ---
     if member.bot and bot.anti_nuke_status:
         owner = await bot.fetch_user(SPECIAL_OWNER_ID)
         if owner:
@@ -331,12 +322,10 @@ async def on_member_join(member):
                     color=discord.Color.red(),
                     timestamp=datetime.datetime.utcnow()
                 )
-                # DM'e butonlu paneli gönder
                 await owner.send(embed=embed, view=AntiNukeBotActionView(guild_id=member.guild.id, bot_id=member.id))
             except Exception as e:
                 print(f"Özel yetkiliye DM gönderilemedi: {e}")
 
-# 3. Toplu Kanal Silme İzleyicisi
 @bot.event
 async def on_guild_channel_delete(channel):
     if not bot.anti_nuke_status or channel.guild is None:
@@ -350,14 +339,11 @@ async def on_guild_channel_delete(channel):
             bot.channel_deletions[user_id] = []
             
         bot.channel_deletions[user_id].append(current_time)
-        # 10 saniyeden eski olan kayıtları temizle
         bot.channel_deletions[user_id] = [t for t in bot.channel_deletions[user_id] if current_time - t <= 10]
         
-        # Limit: 10 saniyede 2 veya daha fazla kanal silinirse cezalandır
         if len(bot.channel_deletions[user_id]) >= 2:
             await nuke_punish(channel.guild, user_id, "Kanal Silme")
 
-# 4. Toplu Rol Silme İzleyicisi
 @bot.event
 async def on_guild_role_delete(role):
     if not bot.anti_nuke_status or role.guild is None:
@@ -373,11 +359,9 @@ async def on_guild_role_delete(role):
         bot.role_deletions[user_id].append(current_time)
         bot.role_deletions[user_id] = [t for t in bot.role_deletions[user_id] if current_time - t <= 10]
         
-        # Limit: 10 saniyede 2 veya daha fazla rol silinirse cezalandır
         if len(bot.role_deletions[user_id]) >= 2:
             await nuke_punish(role.guild, user_id, "Rol Silme")
 
-# 5. Sağ Tık Toplu Ban İzleyicisi
 @bot.event
 async def on_member_ban(guild, user):
     if not bot.anti_nuke_status:
@@ -385,7 +369,6 @@ async def on_member_ban(guild, user):
     
     async for entry in guild.audit_logs(action=discord.AuditLogAction.ban, limit=1):
         user_id = entry.user.id
-        # Eğer banı bu botun kendisi attıysa güvenlik tetiklenmesin
         if user_id == bot.user.id:
             return
             
@@ -397,12 +380,11 @@ async def on_member_ban(guild, user):
         bot.member_bans[user_id].append(current_time)
         bot.member_bans[user_id] = [t for t in bot.member_bans[user_id] if current_time - t <= 10]
         
-        # Limit: 10 saniyede 2 veya daha fazla üye banlanırsa cezalandır
         if len(bot.member_bans[user_id]) >= 2:
             await nuke_punish(guild, user_id, "Sağ Tık Sağır Banlama")
 
 # ==========================================
-# Gelişmiş Log Sistemi (Mevcut Olanlar)
+# Gelişmiş Log Sistemi
 # ==========================================
 @bot.event
 async def on_message_delete(message):
@@ -442,7 +424,8 @@ async def on_message(message):
     global scam_trap_channel_id, scam_panel_message_id
     if message.author.bot or message.guild is None: return
 
-    allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
+    # Sadece Mod ve Owner rollerine muafiyet sağlandı
+    allowed_roles = ["Mod", "Owner"]
     is_staff_member = any(role.name in allowed_roles for role in message.author.roles) or message.author.id == message.guild.owner_id or message.author.id == SPECIAL_OWNER_ID
 
     if scam_trap_channel_id and message.channel.id == scam_trap_channel_id:
@@ -499,7 +482,6 @@ async def on_message(message):
 # MODERASYON & SİSTEM KOMUTLARI
 # ==========================================
 
-# --- YENİ /ANTI_NUKE AYAR KOMUTU ---
 @bot.tree.command(name="anti_nuke", description="Gelişmiş nuke koruma modülünü açar veya kapatır.")
 @is_owner_id()
 @app_commands.describe(durum="Sistem aktif edilsin mi? (True = Açık, False = Kapalı)")
@@ -644,7 +626,7 @@ async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
 @app_commands.describe(channel="Select the text channel to lock")
 async def assignment_channellock(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
-    allowed_staff_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
+    allowed_staff_roles = ["Mod", "Owner"] # Sadece Mod ve Owner rolleri kilit dışında kalır
     
     try:
         overwrites = channel.overwrites
@@ -681,7 +663,7 @@ async def assignment_channellock(interaction: discord.Interaction, channel: disc
 @app_commands.describe(channel="Select the text channel to unlock")
 async def assignment_channelunlock(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
-    allowed_staff_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
+    allowed_staff_roles = ["Mod", "Owner"]
     
     try:
         overwrites = channel.overwrites
@@ -699,7 +681,7 @@ async def assignment_channelunlock(interaction: discord.Interaction, channel: di
 
         await channel.edit(overwrites=overwrites)
         
-        embed = discord.Embed(title="🔓 Channel Unlocked", description=" This channel is now unlocked. Everyone can type again.", color=discord.Color.green())
+        embed = discord.Embed(title="🔓 Channel Unlocked", description="This channel is now unlocked. Everyone can type again.", color=discord.Color.green())
         await channel.send(embed=embed)
         
         log_embed = discord.Embed(title="🔓 Channel Unlocked", color=discord.Color.green())
@@ -855,13 +837,13 @@ async def assignment_copyserver(interaction: discord.Interaction, main_server_id
 
     await interaction.followup.send(f"✅ **Klonlama Başarıyla Tamamlandı!**\n`{target_guild.name}` sunucusunun kanal yapısı `{main_guild.name}` sunucusuna tamamen aktarıldı.", ephemeral=True)
 
-# --- S!SYNC KOMUTU ---
+# --- EN OPTİMİZE S!SYNC KOMUTU ---
 @bot.command(name="sync")
 async def sync_commands(ctx):
     user_roles = [role.name for role in ctx.author.roles]
     is_server_owner = ctx.author.id == ctx.guild.owner_id
     
-    # Sadece senin ID'n, sunucu sahibi veya 'Owner'/'Mod' rolleri çalıştırabilir
+    # Sadece özel ID, sunucu sahibi, Mod veya Owner rolü çalıştırabilir
     if ctx.author.id != SPECIAL_OWNER_ID and not is_server_owner and "Owner" not in user_roles and "Mod" not in user_roles:
         await ctx.send("❌ You are not authorized to use this command!")
         return
