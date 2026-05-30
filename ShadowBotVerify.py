@@ -15,7 +15,8 @@ app = Flask('')
 def home():
     return "Bot is Alive!"
 
-def run():
+# Fonksiyon ismini en alttaki thread ile eşitlemek için run_flask yaptık
+def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
 # ==========================================
@@ -125,7 +126,7 @@ class TicketOpenView(discord.ui.View):
 class AntiNukeBotActionView(discord.ui.View):
     def __init__(self, guild_id, bot_id):
         super().__init__(timeout=None)
-        pass # Boş bırakıldığında hata vermemesi için eklendi
+        pass 
 
 # ==========================================
 # ANA BOT SINIFI
@@ -266,7 +267,6 @@ async def on_message(message):
     global scam_trap_channel_id, scam_panel_message_id
     if message.author.bot or not message.guild: return
 
-    # Honeypot tuzağı kontrolü
     if scam_trap_channel_id and message.channel.id == scam_trap_channel_id:
         try:
             await message.delete()
@@ -275,7 +275,6 @@ async def on_message(message):
             return
         except: pass
 
-    # Link koruması (Yetkililer hariç)
     allowed_roles = ["Mod", "Owner"]
     is_staff = any(r.name in allowed_roles for r in message.author.roles) or message.author.id == message.guild.owner_id or message.author.id == SPECIAL_OWNER_ID
     
@@ -288,9 +287,8 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # ==========================================
-# SLASH KOMUTLARI (YETKİ ENGELSİZ - DOĞRUDAN GLOBAL)
+# SLASH KOMUTLARI
 # ==========================================
-
 @bot.tree.command(name="anti_nuke", description="Anti-nuke sistemini açar/kapatır.")
 @app_commands.describe(durum="True = Açık, False = Kapalı")
 async def assignment_antinuke(interaction: discord.Interaction, durum: bool):
@@ -390,9 +388,8 @@ async def sync_commands(ctx):
 
     await ctx.send("🔄 **Küresel senkronizasyon başlatılıyor... Lütfen bekleyin.**")
     try:
-        # Sunucu çökme riskini sıfırlayan stabil global senkronizasyon
         await bot.tree.sync()
-        await ctx.send("✅ **İşlem başarılı!** Komutlar Discord havuzuna gönderildi.\n\n⚠️ *Gecikme uyarısı: Bot birden fazla sunucuda olduğu için Discord API'sinin komutları listelemesi 10-15 dakikayı bulabilir. Lütfen ara ara Discord'u CTRL+R ile yenileyerek test edin.*")
+        await ctx.send("✅ **İşlem başarılı!** Komutlar Discord havuzuna gönderildi.\n\n⚠️ *Gecikme uyarısı: Discord API'sinin komutları listelemesi 10-15 dakikayı bulabilir. Lütfen ara ara Discord'u CTRL+R ile yenileyerek test edin.*")
     except Exception as e:
         await ctx.send(f"❌ Hata oluştu: {e}")
 
@@ -400,8 +397,8 @@ async def sync_commands(ctx):
 # ÇALIŞTIRMA (RENDER VE WEB UYUMLU)
 # ==========================================
 if __name__ == "__main__":
+    # Üstte düzelttiğimiz 'run_flask' fonksiyonunu hedef gösterdik
     t = Thread(target=run_flask)
     t.start()
     
-    # Render üzerindeki 'DISCORD_TOKEN' anahtarını güvenle çeker.
     bot.run(os.getenv("DISCORD_TOKEN"))
