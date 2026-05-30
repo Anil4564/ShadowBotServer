@@ -21,7 +21,7 @@ def run():
 # -------------------------------------------------------
 
 # SUNUCU ID VE ÖZEL YETKİLİ KULLANICI ID
-GUILD_ID = 1510372441388482691 
+GUILD_ID = 1496194010187042889
 SPECIAL_OWNER_ID = 1424590067577655358
 
 # Render Kalıcı Disk (Persistent Disk) için dosya yolu güncellendi
