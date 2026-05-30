@@ -404,4 +404,4 @@ def run_flask(): run()
 if __name__ == "__main__":
     t = Thread(target=run_flask)
     t.start()
-    bot.run("TOKEN_BURAYA")
+    bot.run("DISCORD_TOKEN")
