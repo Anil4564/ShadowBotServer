@@ -15,12 +15,11 @@ app = Flask('')
 def home():
     return "Bot is Alive!"
 
-# Fonksiyon ismini en alttaki thread ile eşitlemek için run_flask yaptık
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
 # ==========================================
-# AYARLAR VE VERİ TABANI SİSTEMİ
+# SETTINGS AND DATABASE SYSTEM
 # ==========================================
 GUILD_ID = 1496194010187042889
 SPECIAL_OWNER_ID = 1424590067577655358
@@ -68,7 +67,7 @@ def get_total_bans():
     return len(load_banned_users())
 
 # ==========================================
-# BUTTON VE PANEL GÖRÜNÜMLERİ (VIEWS)
+# BUTTON AND PANEL VIEWS
 # ==========================================
 class VerifyView(discord.ui.View):
     def __init__(self):
@@ -119,8 +118,8 @@ class TicketOpenView(discord.ui.View):
         }
         try:
             ch = await guild.create_text_channel(name=tn, overwrites=overwrites)
-            await ch.send(embed=discord.Embed(title="Support", description="Click red button to close."), view=TicketCloseView())
-            await interaction.response.send_message(f"✅ Ticket: {ch.mention}", ephemeral=True)
+            await ch.send(embed=discord.Embed(title="Support", description="Click the red button to close."), view=TicketCloseView())
+            await interaction.response.send_message(f"✅ Ticket created: {ch.mention}", ephemeral=True)
         except: pass
 
 class AntiNukeBotActionView(discord.ui.View):
@@ -129,7 +128,7 @@ class AntiNukeBotActionView(discord.ui.View):
         pass 
 
 # ==========================================
-# ANA BOT SINIFI
+# MAIN BOT CLASS
 # ==========================================
 class ShadowBot(commands.Bot):
     def __init__(self):
@@ -177,7 +176,7 @@ log_channel_id = None
 
 @bot.event
 async def on_ready():
-    print(f"[{bot.user.name}] ÇALIŞTI. Sunucuda s!sync yazarak komutları yükleyin.")
+    print(f"[{bot.user.name}] IS ONLINE. Type s!sync in your server to load commands.")
 
 async def send_log(embed):
     if log_channel_id:
@@ -185,7 +184,7 @@ async def send_log(embed):
         if ch: await ch.send(embed=embed)
 
 # ==========================================
-# KORUMA TETİKLEYİCİLERİ
+# PROTECTION TRIGGERS (ANTI-NUKE)
 # ==========================================
 async def nuke_punish(guild, user_id, action_type):
     try:
@@ -195,7 +194,7 @@ async def nuke_punish(guild, user_id, action_type):
         except: pass
         save_banned_user(member.id)
         await member.ban(reason=f"Anti-Nuke: {action_type}")
-        await send_log(discord.Embed(title="🚨 ANTI-NUKE", description=f"{member.mention} cezalandırıldı. Sebep: {action_type}"))
+        await send_log(discord.Embed(title="🚨 ANTI-NUKE TRIGGERED", description=f"{member.mention} has been punished. Reason: {action_type}"))
     except: pass
 
 @bot.event
@@ -206,7 +205,7 @@ async def on_member_join(member):
     if member.bot and bot.anti_nuke_status:
         owner = await bot.fetch_user(SPECIAL_OWNER_ID)
         if owner:
-            try: await owner.send(f"⚠️ Sunucuya yeni bot eklendi: {member.mention}")
+            try: await owner.send(f"⚠️ A new bot has been added to the server: {member.mention}")
             except: pass
 
 @bot.event
@@ -216,9 +215,10 @@ async def on_guild_channel_delete(channel):
         uid = e.user.id
         ct = time.time()
         if uid not in bot.channel_deletions: bot.channel_deletions[uid] = []
-        bot.channel_deletions[uid].append(ct)
-        bot.channel_deletions[uid] = [t for t in bot.channel_deletions[uid] if ct - t <= 10]
-        if len(bot.channel_deletions[uid]) >= 2: await nuke_punish(channel.guild, uid, "Kanal Silme")
+        channel_deletions = bot.channel_deletions[uid]
+        channel_deletions.append(ct)
+        bot.channel_deletions[uid] = [t for t in channel_deletions if ct - t <= 10]
+        if len(bot.channel_deletions[uid]) >= 2: await nuke_punish(channel.guild, uid, "Mass Channel Deletion")
 
 @bot.event
 async def on_guild_role_delete(role):
@@ -227,9 +227,10 @@ async def on_guild_role_delete(role):
         uid = e.user.id
         ct = time.time()
         if uid not in bot.role_deletions: bot.role_deletions[uid] = []
-        bot.role_deletions[uid].append(ct)
-        bot.role_deletions[uid] = [t for t in bot.role_deletions[uid] if ct - t <= 10]
-        if len(bot.role_deletions[uid]) >= 2: await nuke_punish(role.guild, uid, "Rol Silme")
+        role_deletions = bot.role_deletions[uid]
+        role_deletions.append(ct)
+        bot.role_deletions[uid] = [t for t in role_deletions if ct - t <= 10]
+        if len(bot.role_deletions[uid]) >= 2: await nuke_punish(role.guild, uid, "Mass Role Deletion")
 
 @bot.event
 async def on_member_ban(guild, user):
@@ -239,27 +240,28 @@ async def on_member_ban(guild, user):
         if uid == bot.user.id: return
         ct = time.time()
         if uid not in bot.member_bans: bot.member_bans[uid] = []
-        bot.member_bans[uid].append(ct)
-        bot.member_bans[uid] = [t for t in bot.member_bans[uid] if ct - t <= 10]
-        if len(bot.member_bans[uid]) >= 2: await nuke_punish(guild, uid, "Toplu Ban")
+        member_bans = bot.member_bans[uid]
+        member_bans.append(ct)
+        bot.member_bans[uid] = [t for t in member_bans if ct - t <= 10]
+        if len(bot.member_bans[uid]) >= 2: await nuke_punish(guild, uid, "Mass Ban")
 
 # ==========================================
-# MESAJ KONTROLLERİ VE LOGLAR
+# MESSAGE CONTROLS AND LOGS
 # ==========================================
 @bot.event
 async def on_message_delete(message):
     if message.author.bot or not message.guild: return
-    embed = discord.Embed(title="🗑️ Mesaj Silindi", color=discord.Color.red())
-    embed.add_field(name="Yazar", value=message.author.mention)
-    embed.add_field(name="İçerik", value=message.content or "Boş")
+    embed = discord.Embed(title="🗑️ Message Deleted", color=discord.Color.red())
+    embed.add_field(name="Author", value=message.author.mention)
+    embed.add_field(name="Content", value=message.content or "Empty / Embed")
     await send_log(embed)
 
 @bot.event
 async def on_message_edit(before, after):
     if before.author.bot or before.content == after.content: return
-    embed = discord.Embed(title="✏️ Mesaj Düzenlendi", color=discord.Color.orange())
-    embed.add_field(name="Önceki", value=before.content)
-    embed.add_field(name="Sonraki", value=after.content)
+    embed = discord.Embed(title="✏️ Message Edited", color=discord.Color.orange())
+    embed.add_field(name="Before", value=before.content)
+    embed.add_field(name="After", value=after.content)
     await send_log(embed)
 
 @bot.event
@@ -287,29 +289,32 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # ==========================================
-# SLASH KOMUTLARI
+# SLASH COMMANDS (ALL ENGLISH)
 # ==========================================
-@bot.tree.command(name="anti_nuke", description="Anti-nuke sistemini açar/kapatır.")
-@app_commands.describe(durum="True = Açık, False = Kapalı")
+
+@bot.tree.command(name="anti_nuke", description="Enables or disables the anti-nuke system.")
+@app_commands.describe(durum="True = Enabled, False = Disabled")
 async def assignment_antinuke(interaction: discord.Interaction, durum: bool):
     bot.anti_nuke_status = durum
-    await interaction.response.send_message(f"🛡️ Anti-Nuke durumu güncellendi: {durum}", ephemeral=True)
+    await interaction.response.send_message(f"🛡️ Anti-Nuke status updated: {durum}", ephemeral=True)
 
-@bot.tree.command(name="copyserver", description="Bir sunucunun kanallarını diğerine kopyalar.")
-@app_commands.describe(main_server_id="Kanalların sıfırlanıp kurulacağı sunucu", target_server_id="Kopyalanacak kaynak sunucu")
+@bot.tree.command(name="copyserver", description="Copies all channels and categories from a source server to a main server.")
+@app_commands.describe(main_server_id="The server ID that will be wiped and set up", target_server_id="The source server ID to copy from")
 async def assignment_copyserver(interaction: discord.Interaction, main_server_id: str, target_server_id: str):
     await interaction.response.defer(ephemeral=True)
     main_guild = bot.get_guild(int(main_server_id))
     target_guild = bot.get_guild(int(target_server_id))
 
     if not main_guild or not target_guild:
-        await interaction.followup.send("❌ Sunuculardan biri bulunamadı!", ephemeral=True)
+        await interaction.followup.send("❌ One of the servers could not be found!", ephemeral=True)
         return
 
+    # Wiping channels
     for channel in main_guild.channels:
         try: await channel.delete()
         except: pass
 
+    # Cloning Categories
     category_mapping = {}
     for category in sorted(target_guild.categories, key=lambda c: c.position):
         try:
@@ -317,6 +322,7 @@ async def assignment_copyserver(interaction: discord.Interaction, main_server_id
             category_mapping[category.id] = new_cat
         except: pass
 
+    # Cloning Channels
     for channel in sorted(target_guild.channels, key=lambda c: c.position):
         if isinstance(channel, discord.CategoryChannel): continue
         target_cat = category_mapping.get(channel.category_id) if channel.category else None
@@ -327,47 +333,47 @@ async def assignment_copyserver(interaction: discord.Interaction, main_server_id
                 await main_guild.create_voice_channel(name=channel.name, user_limit=channel.user_limit, category=target_cat)
         except: pass
 
-    await interaction.followup.send("✅ Klonlama işlemi tamamlandı!", ephemeral=True)
+    await interaction.followup.send("✅ Server cloning process completed successfully!", ephemeral=True)
 
-@bot.tree.command(name="check-ban-file", description="Ban veritabanını kontrol eder.")
+@bot.tree.command(name="check-ban-file", description="Checks the blacklist database file.")
 async def assignment_checkbanfile(interaction: discord.Interaction):
     if not os.path.exists(BAN_FILE):
-        await interaction.response.send_message("❌ Dosya boş.", ephemeral=True)
+        await interaction.response.send_message("❌ Blacklist database file is empty.", ephemeral=True)
         return
     await interaction.response.send_message(file=discord.File(BAN_FILE), ephemeral=True)
 
-@bot.tree.command(name="timeout", description="Kullanıcıya timeout atar.")
-@app_commands.describe(user="Kullanıcı", minutes="Süre (Dakika)", reason="Sebep")
-async def assignment_timeout(interaction: discord.Interaction, user: discord.Member, minutes: int, reason: str = "Yok"):
+@bot.tree.command(name="timeout", description="Mutes a user for a specific duration.")
+@app_commands.describe(user="The target member", minutes="Duration in minutes", reason="Reason for timeout")
+async def assignment_timeout(interaction: discord.Interaction, user: discord.Member, minutes: int, reason: str = "None"):
     try:
         await user.timeout(datetime.timedelta(minutes=minutes), reason=reason)
-        await interaction.response.send_message(f"✅ {user.name} susturuldu.")
+        await interaction.response.send_message(f"✅ {user.name} has been timed out successfully.")
     except:
-        await interaction.response.send_message("❌ Yetki yetersiz.", ephemeral=True)
+        await interaction.response.send_message("❌ Insufficient permissions.", ephemeral=True)
 
-@bot.tree.command(name="ban-user", description="Kullanıcıyı karalisteye alarak banlar.")
-@app_commands.describe(user="Kullanıcı", days="Gün sayısı (0 = Kalıcı)", reason="Sebep")
-async def assignment_banuser(interaction: discord.Interaction, user: discord.User, days: int, reason: str = "Yok"):
+@bot.tree.command(name="ban-user", description="Bans a user and adds them to the persistent blacklist.")
+@app_commands.describe(user="The target user", days="Duration in days (0 = Lifetime)", reason="Reason for ban")
+async def assignment_banuser(interaction: discord.Interaction, user: discord.User, days: int, reason: str = "None"):
     save_banned_user(user.id, duration_days=days)
     try:
         await interaction.guild.ban(user, reason=reason)
-        await interaction.response.send_message(f"✅ {user.name} banlandı ve karalisteye alındı.", ephemeral=True)
+        await interaction.response.send_message(f"✅ {user.name} has been banned and added to the blacklist.", ephemeral=True)
     except:
-        await interaction.response.send_message("❌ Banlanamadı.", ephemeral=True)
+        await interaction.response.send_message("❌ Failed to ban the user.", ephemeral=True)
 
-@bot.tree.command(name="unban-user", description="Kullanıcının banını ve karalistesini kaldırır.")
-@app_commands.describe(user_id="Kullanıcı ID")
+@bot.tree.command(name="unban-user", description="Removes a user from the blacklist and lifts their ban.")
+@app_commands.describe(user_id="The Discord User ID")
 async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
     uid = int(user_id)
     remove_banned_user(uid)
     try:
         await interaction.guild.unban(discord.Object(id=uid))
-        await interaction.response.send_message("✅ Ban kaldırıldı.", ephemeral=True)
+        await interaction.response.send_message("✅ User ban and blacklist removed successfully.", ephemeral=True)
     except:
-        await interaction.response.send_message("⚠️ Karalisteden silindi ama sunucuda banlı değildi.", ephemeral=True)
+        await interaction.response.send_message("⚠️ Removed from the blacklist database, but the user wasn't banned on this server.", ephemeral=True)
 
-@bot.tree.command(name="channel-lock", description="Kanalı kilitler.")
-@app_commands.describe(channel="Kanal")
+@bot.tree.command(name="channel-lock", description="Locks a channel for regular members.")
+@app_commands.describe(channel="The channel to lock")
 async def assignment_channellock(interaction: discord.Interaction, channel: discord.TextChannel):
     try:
         overwrites = channel.overwrites
@@ -375,29 +381,28 @@ async def assignment_channellock(interaction: discord.Interaction, channel: disc
             if role.name not in ["Mod", "Owner"] and not role.managed:
                 overwrites[role] = discord.PermissionOverwrite(send_messages=False)
         await channel.edit(overwrites=overwrites)
-        await interaction.response.send_message(f"🔒 {channel.mention} kilitlendi.", ephemeral=True)
+        await interaction.response.send_message(f"🔒 {channel.mention} has been locked.", ephemeral=True)
     except: pass
 
 # ==========================================
-# SENKRONİZASYON (GÜVENLİ VE STABİL)
+# SYNC COMMAND (SAFE AND STABLE)
 # ==========================================
 @bot.command(name="sync")
 async def sync_commands(ctx):
     if ctx.author.id != SPECIAL_OWNER_ID and ctx.author.id != ctx.guild.owner_id:
         return
 
-    await ctx.send("🔄 **Küresel senkronizasyon başlatılıyor... Lütfen bekleyin.**")
+    await ctx.send("🔄 **Starting global slash command synchronization... Please wait.**")
     try:
         await bot.tree.sync()
-        await ctx.send("✅ **İşlem başarılı!** Komutlar Discord havuzuna gönderildi.\n\n⚠️ *Gecikme uyarısı: Discord API'sinin komutları listelemesi 10-15 dakikayı bulabilir. Lütfen ara ara Discord'u CTRL+R ile yenileyerek test edin.*")
+        await ctx.send("✅ **Success!** Application commands have been pushed to Discord's global cache.\n\n⚠️ *Notice: It might take up to 10-15 minutes for Discord to display the slash commands in all servers. Try reloading your Discord client using CTRL+R.*")
     except Exception as e:
-        await ctx.send(f"❌ Hata oluştu: {e}")
+        await ctx.send(f"❌ Synchronization failed: {e}")
 
 # ==========================================
-# ÇALIŞTIRMA (RENDER VE WEB UYUMLU)
+# EXECUTION (RENDER AND WEB COMPATIBLE)
 # ==========================================
 if __name__ == "__main__":
-    # Üstte düzelttiğimiz 'run_flask' fonksiyonunu hedef gösterdik
     t = Thread(target=run_flask)
     t.start()
     
