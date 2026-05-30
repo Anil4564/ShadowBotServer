@@ -125,6 +125,7 @@ class TicketOpenView(discord.ui.View):
 class AntiNukeBotActionView(discord.ui.View):
     def __init__(self, guild_id, bot_id):
         super().__init__(timeout=None)
+        pass # Boş bırakıldığında hata vermemesi için eklendi
 
 # ==========================================
 # ANA BOT SINIFI
@@ -175,7 +176,7 @@ log_channel_id = None
 
 @bot.event
 async def on_ready():
-    print(f"[{bot.user.name}] ÇALIŞTI. s!sync yazarak komutları yükleyin.")
+    print(f"[{bot.user.name}] ÇALIŞTI. Sunucuda s!sync yazarak komutları yükleyin.")
 
 async def send_log(embed):
     if log_channel_id:
@@ -380,28 +381,27 @@ async def assignment_channellock(interaction: discord.Interaction, channel: disc
     except: pass
 
 # ==========================================
-# SENKRONİZASYON (KÖKTEN ÇÖZÜM)
+# SENKRONİZASYON (GÜVENLİ VE STABİL)
 # ==========================================
 @bot.command(name="sync")
 async def sync_commands(ctx):
     if ctx.author.id != SPECIAL_OWNER_ID and ctx.author.id != ctx.guild.owner_id:
         return
 
-    await ctx.send("🔄 **Bütün sunucular için Global Senkronizasyon başlatıldı...**")
+    await ctx.send("🔄 **Küresel senkronizasyon başlatılıyor... Lütfen bekleyin.**")
     try:
-        # Eski sunucu bazlı tüm kalıntıları temizle
-        bot.tree.clear_commands(guild=ctx.guild)
-        await bot.tree.sync(guild=ctx.guild)
-        
-        # Tamamen global (tüm sunuculara) tertemiz push et
+        # Sunucu çökme riskini sıfırlayan stabil global senkronizasyon
         await bot.tree.sync()
-        await ctx.send("✅ **İŞLEM BAŞARILI!** Komutlar Discord havuzuna gönderildi.\n\n⚠️ *Gecikme uyarısı: Bot 2 sunucuda olduğu için Discord API'sinin komutları getirmesi 10-15 dakikayı bulabilir. Lütfen sabırla bekleyin ve ara ara Discord'u CTRL+R ile yenileyin.*")
+        await ctx.send("✅ **İşlem başarılı!** Komutlar Discord havuzuna gönderildi.\n\n⚠️ *Gecikme uyarısı: Bot birden fazla sunucuda olduğu için Discord API'sinin komutları listelemesi 10-15 dakikayı bulabilir. Lütfen ara ara Discord'u CTRL+R ile yenileyerek test edin.*")
     except Exception as e:
         await ctx.send(f"❌ Hata oluştu: {e}")
 
-def run_flask(): run()
-
+# ==========================================
+# ÇALIŞTIRMA (RENDER VE WEB UYUMLU)
+# ==========================================
 if __name__ == "__main__":
     t = Thread(target=run_flask)
     t.start()
-    bot.run("DISCORD_TOKEN")
+    
+    # Render üzerindeki 'DISCORD_TOKEN' anahtarını güvenle çeker.
+    bot.run(os.getenv("DISCORD_TOKEN"))
