@@ -252,18 +252,22 @@ async def on_ready():
 
 def is_owner_id():
     def predicate(interaction: discord.Interaction) -> bool:
+        # Sadece senin özel ID'ne izin verir
         return interaction.user.id == SPECIAL_OWNER_ID
     return app_commands.check(predicate)
 
 def is_staff():
     def predicate(interaction: discord.Interaction) -> bool:
+        # Sadece 'Owner' ve 'Mod' rollerine izin verir
         allowed_roles = ["Jr Mod", "Mod", "Head Mod", "Owner"]
         user_roles = [role.name for role in interaction.user.roles]
+        
+        # Eğer kullanıcı özel ID'ye sahipse, sunucu sahibiyse veya belirtilen rolleri taşıyorsa true döner
         if any(role in user_roles for role in allowed_roles) or interaction.user.id == interaction.guild.owner_id or interaction.user.id == SPECIAL_OWNER_ID:
             return True
         return False
     return app_commands.check(predicate)
-
+    
 async def send_log(embed):
     global log_channel_id
     if log_channel_id:
@@ -857,20 +861,18 @@ async def sync_commands(ctx):
     user_roles = [role.name for role in ctx.author.roles]
     is_server_owner = ctx.author.id == ctx.guild.owner_id
     
-    if ctx.author.id != SPECIAL_OWNER_ID and not is_server_owner and "Owner" not in user_roles:
+    # Sadece senin ID'n, sunucu sahibi veya 'Owner'/'Mod' rolleri çalıştırabilir
+    if ctx.author.id != SPECIAL_OWNER_ID and not is_server_owner and "Owner" not in user_roles and "Mod" not in user_roles:
         await ctx.send("❌ You are not authorized to use this command!")
         return
 
-    guild = discord.Object(id=GUILD_ID)
-    await ctx.send("🔄 **Syncing slash commands directly to this server...**")
+    await ctx.send("🔄 **Syncing slash commands... Please wait.**")
     try:
-        bot.tree.clear_commands(guild=guild)
-        await bot.tree.sync(guild=guild)
+        guild_object = discord.Object(id=GUILD_ID)
+        bot.tree.copy_global_to(guild=guild_object)
+        await bot.tree.sync(guild=guild_object)
         
-        bot.tree.copy_global_to(guild=guild)
-        await bot.tree.sync(guild=guild)
-        
-        await ctx.send("✅ **Direct server sync complete!** Please restart Discord (Ctrl+R) or change your channel to refresh the slash menu.")
+        await ctx.send("✅ **Sync complete!** Slash commands are now active on this server.")
     except Exception as e:
         await ctx.send(f"❌ Sync failed: {e}")
 
