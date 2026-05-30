@@ -142,6 +142,51 @@ class TicketOpenView(discord.ui.View):
             await interaction.response.send_message(f"❌ Failed to create ticket channel: {e}", ephemeral=True)
 
 
+# --- 🤖 ANTI-NUKE BOT KONTROL BUTONLARI ---
+class AntiNukeBotActionView(discord.ui.View):
+    def __init__(self, guild_id: int, bot_id: int):
+        super().__init__(timeout=None)
+        self.guild_id = guild_id
+        self.bot_id = bot_id
+
+    @discord.ui.button(label="Ban Bot", style=discord.ButtonStyle.danger, emoji="🔨")
+    async def ban_bot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = interaction.client.get_guild(self.guild_id)
+        if not guild:
+            await interaction.response.send_message("❌ Sunucu bulunamadı.", ephemeral=True)
+            return
+        try:
+            await guild.ban(discord.Object(id=self.bot_id), reason="Anti-Nuke: Güvenilmeyen bot sahibinin emriyle banlandı.")
+            await interaction.response.send_message(f"✅ Bot (ID: {self.bot_id}) başarıyla **sunucudan banlandı**.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Banlama başarısız oldu: {e}", ephemeral=True)
+
+    @discord.ui.button(label="Kick Bot", style=discord.ButtonStyle.orange, emoji="🦏")
+    async def kick_bot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = interaction.client.get_guild(self.guild_id)
+        if not guild:
+            await interaction.response.send_message("❌ Sunucu bulunamadı.", ephemeral=True)
+            return
+        try:
+            member = await guild.fetch_member(self.bot_id)
+            await member.kick(reason="Anti-Nuke: Güvenilmeyen bot sahibinin emriyle atıldı.")
+            await interaction.response.send_message(f"✅ Bot (ID: {self.bot_id}) başarıyla **sunucudan atıldı (kick)**.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Atma işlemi başarısız oldu: {e}", ephemeral=True)
+
+    @discord.ui.button(label="Unban Bot", style=discord.ButtonStyle.success, emoji="🔓")
+    async def unban_bot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = interaction.client.get_guild(self.guild_id)
+        if not guild:
+            await interaction.response.send_message("❌ Sunucu bulunamadı.", ephemeral=True)
+            return
+        try:
+            await guild.unban(discord.Object(id=self.bot_id), reason="Anti-Nuke: Sahibinin emriyle banı kaldırıldı.")
+            await interaction.response.send_message(f"✅ Botun (ID: {self.bot_id}) **banı başarıyla kaldırıldı**.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Ban kaldırma başarısız oldu: {e}", ephemeral=True)
+
+
 class ShadowBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -151,6 +196,12 @@ class ShadowBot(commands.Bot):
         intents.guilds = True  
         intents.moderation = True 
         super().__init__(command_prefix="s!", intents=intents)
+
+        # Anti-Nuke Takip Sözlükleri ve Durumu
+        self.anti_nuke_status = True  # Varsayılan olarak aktif başlar
+        self.channel_deletions = {}   # {user_id: [timestamps]}
+        self.role_deletions = {}      # {user_id: [timestamps]}
+        self.member_bans = {}         # {user_id: [timestamps]}
 
     async def setup_hook(self):
         self.add_view(VerifyView())
@@ -220,30 +271,134 @@ async def send_log(embed):
         if channel:
             await channel.send(embed=embed)
 
-# --- GÜNCELLENEN CHECK-BAN-FILE KOMUTU ---
-@bot.tree.command(name="check-ban-file", description="Banned users dosyasının içeriğini gösterir.")
-@is_staff() # Artık sadece is_owner_id değil, owner/staff rollerine sahip olanlar da görebilir
-async def assignment_checkbanfile(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    if not os.path.exists(BAN_FILE):
-        await interaction.followup.send("❌ Dosya henüz oluşturulmamış (Henüz kimse banlanmadı).", ephemeral=True)
+# ==========================================
+# 🚨 Gelişmiş Anti-Nuke Tetikleyicileri (Eventleri)
+# ==========================================
+
+# 1. Cezalandırma Yardımcı Fonksiyonu
+async def nuke_punish(guild, user_id, action_type):
+    try:
+        member = await guild.fetch_member(user_id)
+        if member.id == guild.owner_id or member.id == SPECIAL_OWNER_ID or member.id == bot.user.id:
+            return # Sunucu sahibini, özel yetkiliyi veya botun kendisini cezalandırma
+        
+        # Tüm rollerini al (Entegrasyon / Boşta kalan rolleri korumak için hata fırlatabilir, try yapısındadır)
+        try:
+            await member.edit(roles=[])
+        except:
+            pass
+        
+        # Sunucudan banla ve kara listeye ekle
+        save_banned_user(member.id)
+        await member.ban(reason=f"Shadow Anti-Nuke: Toplu {action_type} limiti aşıldı!")
+        
+        # Log kanallarına bildir
+        embed = discord.Embed(title="🚨 ANTI-NUKE SİSTEMİ DEVREDE", color=discord.Color.dark_red())
+        embed.description = f"**Zararlı Yetkili Cezalandırıldı!**\n\n**Kullanıcı:** {member.mention} (`{member.id}`)\n**Sebep:** Kısa sürede toplu veya agresif `{action_type}` işlemi gerçekleştirdi.\n**İşlem:** Tüm rolleri alındı ve kalıcı olarak banlandı."
+        await send_log(embed)
+    except Exception as e:
+        print(f"Anti-nuke cezalandırma hatası: {e}")
+
+# 2. Yeni Bot Ekleme Koruması & DM Bildirimi
+@bot.event
+async def on_member_join(member):
+    # Kara liste kontrolü (Mevcut kodun)
+    banned_list = load_banned_users()
+    if member.id in banned_list:
+        try:
+            await member.ban(reason="Shadow Security: Auto-Reban (User is blacklisted).")
+            embed = discord.Embed(title="🚨 Auto-Reban Triggered", color=discord.Color.dark_red())
+            embed.add_field(name="User", value=f"{member.mention} ({member.name})", inline=True)
+            embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
+            embed.add_field(name="Reason", value="Blacklisted user tried to rejoin the server.", inline=False)
+            await send_log(embed)
+            return
+        except Exception as e:
+            print(f"[ShadowBot] Failed to auto-reban {member.id}: {e}")
+
+    # --- YENİ BOT KATILIM KONTROLÜ VE DM BİLDİRİMİ ---
+    if member.bot and bot.anti_nuke_status:
+        owner = await bot.fetch_user(SPECIAL_OWNER_ID)
+        if owner:
+            try:
+                embed = discord.Embed(
+                    title="⚠️ Anti-Nuke: Yeni Bot Tespit Edildi!",
+                    description=f"**{member.guild.name}** Added New Bot\n\n**Bot İsmi:** {member.mention}\n**Bot ID:** `{member.id}`",
+                    color=discord.Color.red(),
+                    timestamp=datetime.datetime.utcnow()
+                )
+                # DM'e butonlu paneli gönder
+                await owner.send(embed=embed, view=AntiNukeBotActionView(guild_id=member.guild.id, bot_id=member.id))
+            except Exception as e:
+                print(f"Özel yetkiliye DM gönderilemedi: {e}")
+
+# 3. Toplu Kanal Silme İzleyicisi
+@bot.event
+async def on_guild_channel_delete(channel):
+    if not bot.anti_nuke_status or channel.guild is None:
         return
+    
+    async for entry in channel.guild.audit_logs(action=discord.AuditLogAction.channel_delete, limit=1):
+        user_id = entry.user.id
+        current_time = time.time()
         
-    with open(BAN_FILE, "r") as f:
-        content = f.read()
+        if user_id not in bot.channel_deletions:
+            bot.channel_deletions[user_id] = []
+            
+        bot.channel_deletions[user_id].append(current_time)
+        # 10 saniyeden eski olan kayıtları temizle
+        bot.channel_deletions[user_id] = [t for t in bot.channel_deletions[user_id] if current_time - t <= 10]
         
-    if not content.strip():
-        await interaction.followup.send("📂 Dosya mevcut ama içi tamamen boş.", ephemeral=True)
+        # Limit: 10 saniyede 2 veya daha fazla kanal silinirse cezalandır
+        if len(bot.channel_deletions[user_id]) >= 2:
+            await nuke_punish(channel.guild, user_id, "Kanal Silme")
+
+# 4. Toplu Rol Silme İzleyicisi
+@bot.event
+async def on_guild_role_delete(role):
+    if not bot.anti_nuke_status or role.guild is None:
         return
+    
+    async for entry in role.guild.audit_logs(action=discord.AuditLogAction.role_delete, limit=1):
+        user_id = entry.user.id
+        current_time = time.time()
         
-    with open("temp_show.txt", "w") as tf:
-        tf.write(content)
+        if user_id not in bot.role_deletions:
+            bot.role_deletions[user_id] = []
+            
+        bot.role_deletions[user_id].append(current_time)
+        bot.role_deletions[user_id] = [t for t in bot.role_deletions[user_id] if current_time - t <= 10]
         
-    await interaction.followup.send("📂 Güncel ban dosyası ektedir:", file=discord.File("temp_show.txt"), ephemeral=True)
-    os.remove("temp_show.txt")
+        # Limit: 10 saniyede 2 veya daha fazla rol silinirse cezalandır
+        if len(bot.role_deletions[user_id]) >= 2:
+            await nuke_punish(role.guild, user_id, "Rol Silme")
+
+# 5. Sağ Tık Toplu Ban İzleyicisi
+@bot.event
+async def on_member_ban(guild, user):
+    if not bot.anti_nuke_status:
+        return
+    
+    async for entry in guild.audit_logs(action=discord.AuditLogAction.ban, limit=1):
+        user_id = entry.user.id
+        # Eğer banı bu botun kendisi attıysa güvenlik tetiklenmesin
+        if user_id == bot.user.id:
+            return
+            
+        current_time = time.time()
+        
+        if user_id not in bot.member_bans:
+            bot.member_bans[user_id] = []
+            
+        bot.member_bans[user_id].append(current_time)
+        bot.member_bans[user_id] = [t for t in bot.member_bans[user_id] if current_time - t <= 10]
+        
+        # Limit: 10 saniyede 2 veya daha fazla üye banlanırsa cezalandır
+        if len(bot.member_bans[user_id]) >= 2:
+            await nuke_punish(guild, user_id, "Sağ Tık Sağır Banlama")
 
 # ==========================================
-# Gelişmiş Log Sistemi
+# Gelişmiş Log Sistemi (Mevcut Olanlar)
 # ==========================================
 @bot.event
 async def on_message_delete(message):
@@ -335,7 +490,42 @@ async def on_message(message):
             except: pass
 
     await bot.process_commands(message)
-    
+
+# ==========================================
+# MODERASYON & SİSTEM KOMUTLARI
+# ==========================================
+
+# --- YENİ /ANTI_NUKE AYAR KOMUTU ---
+@bot.tree.command(name="anti_nuke", description="Gelişmiş nuke koruma modülünü açar veya kapatır.")
+@is_owner_id()
+@app_commands.describe(durum="Sistem aktif edilsin mi? (True = Açık, False = Kapalı)")
+async def assignment_antinuke(interaction: discord.Interaction, durum: bool):
+    await interaction.response.defer(ephemeral=True)
+    bot.anti_nuke_status = durum
+    metin = "🟢 **AKTİF**" if durum else "🔴 **DEVRE DIŞI**"
+    await interaction.followup.send(f"🛡️ Anti-Nuke güvenlik duvarı başarıyla {metin} konumuna getirildi.", ephemeral=True)
+
+@bot.tree.command(name="check-ban-file", description="Banned users dosyasının içeriğini gösterir.")
+@is_staff() 
+async def assignment_checkbanfile(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if not os.path.exists(BAN_FILE):
+        await interaction.followup.send("❌ Dosya henüz oluşturulmamış (Henüz kimse banlanmadı).", ephemeral=True)
+        return
+        
+    with open(BAN_FILE, "r") as f:
+        content = f.read()
+        
+    if not content.strip():
+        await interaction.followup.send("📂 Dosya mevcut ama içi tamamen boş.", ephemeral=True)
+        return
+        
+    with open("temp_show.txt", "w") as tf:
+        tf.write(content)
+        
+    await interaction.followup.send("📂 Güncel ban dosyası ektedir:", file=discord.File("temp_show.txt"), ephemeral=True)
+    os.remove("temp_show.txt")
+
 @bot.tree.command(name="timeout", description="Mutes a member for a specified duration using Discord Timeout.")
 @is_staff()
 @app_commands.describe(user="The member to mute", minutes="Duration in minutes", reason="Reason for the timeout")
@@ -368,28 +558,6 @@ async def assignment_timeout(interaction: discord.Interaction, user: discord.Mem
     except Exception as e:
         await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
 
-# ==========================================
-# 🛡️ OTO-TEKRAR BAN SİSTEMİ (AUTO-REBAN)
-# ==========================================
-@bot.event
-async def on_member_join(member):
-    banned_list = load_banned_users()
-    if member.id in banned_list:
-        try:
-            await member.ban(reason="Shadow Security: Auto-Reban (User is blacklisted).")
-            
-            embed = discord.Embed(title="🚨 Auto-Reban Triggered", color=discord.Color.dark_red())
-            embed.add_field(name="User", value=f"{member.mention} ({member.name})", inline=True)
-            embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
-            embed.add_field(name="Reason", value="Blacklisted user tried to rejoin the server.", inline=False)
-            await send_log(embed)
-            print(f"[ShadowBot] Auto-rebanned blacklisted user: {member.id}")
-        except Exception as e:
-            print(f"[ShadowBot] Failed to auto-reban {member.id}: {e}")
-
-# ==========================================
-# MODERASYON & SİSTEM KOMUTLARI
-# ==========================================
 @bot.tree.command(name="ban-user", description="Bans a user and locks them from rejoining. (0 for Lifetime)")
 @is_staff()
 @app_commands.describe(user="The user to ban", days="Ban duration in days (Use 0 for Lifetime)", reason="Reason for the ban")
@@ -527,7 +695,7 @@ async def assignment_channelunlock(interaction: discord.Interaction, channel: di
 
         await channel.edit(overwrites=overwrites)
         
-        embed = discord.Embed(title="🔓 Channel Unlocked", description="This channel is now unlocked. Everyone can type again.", color=discord.Color.green())
+        embed = discord.Embed(title="🔓 Channel Unlocked", description=" This channel is now unlocked. Everyone can type again.", color=discord.Color.green())
         await channel.send(embed=embed)
         
         log_embed = discord.Embed(title="🔓 Channel Unlocked", color=discord.Color.green())
@@ -611,6 +779,77 @@ async def assignment_close(interaction: discord.Interaction):
         await interaction.response.send_message("Closing in 5s...", ephemeral=False)
         await asyncio.sleep(5)
         await interaction.channel.delete()
+
+@bot.tree.command(name="copyserver", description="Target sunucudaki kanalları kopyalayıp Main sunucuya aktarır (ÖNCE MAİN'DEKİLERİ SİLER).")
+@is_owner_id()
+@app_commands.describe(main_server_id="Kanalların sıfırlanıp OLUŞTURULACAĞI sunucu ID'si", target_server_id="Kanalların KOPYALANACAĞI kaynak sunucu ID'si")
+async def assignment_copyserver(interaction: discord.Interaction, main_server_id: str, target_server_id: str):
+    await interaction.response.defer(ephemeral=True)
+
+    if not main_server_id.isdigit() or not target_server_id.isdigit():
+        await interaction.followup.send("❌ Lütfen geçerli sayısal ID'ler girin.", ephemeral=True)
+        return
+
+    main_guild = bot.get_guild(int(main_server_id))
+    target_guild = bot.get_guild(int(target_server_id))
+
+    if not main_guild:
+        await interaction.followup.send("❌ **Main Server** bulunamadı! Botun o sunucuda olduğundan emin olun.", ephemeral=True)
+        return
+    if not target_guild:
+        await interaction.followup.send("❌ **Target Server** bulunamadı! Botun o sunucuda olduğundan emin olun.", ephemeral=True)
+        return
+
+    await interaction.followup.send(f"⚠️ Klonlama işlemi başladı!\n**Main Server:** {main_guild.name}\n**Target Server:** {target_guild.name}\n\n*Önce Main Server'daki eski kanallar temizleniyor...*", ephemeral=True)
+
+    for channel in main_guild.channels:
+        try:
+            await channel.delete(reason="Server Copy: Eski kanalların temizlenmesi.")
+        except discord.Forbidden:
+            print(f"[{main_guild.name}] {channel.name} silinemedi (Yetki yetersiz).")
+        except Exception as e:
+            print(f"Hata: {e}")
+
+    await asyncio.sleep(2)
+
+    category_mapping = {}
+
+    for category in sorted(target_guild.categories, key=lambda c: c.position):
+        try:
+            new_category = await main_guild.create_category(
+                name=category.name,
+                position=category.position
+            )
+            category_mapping[category.id] = new_category
+        except Exception as e:
+            print(f"Kategori oluşturulamadı ({category.name}): {e}")
+
+    for channel in sorted(target_guild.channels, key=lambda c: c.position):
+        if isinstance(channel, discord.CategoryChannel):
+            continue 
+
+        target_category = category_mapping.get(channel.category_id) if channel.category else None
+
+        try:
+            if isinstance(channel, discord.TextChannel):
+                await main_guild.create_text_channel(
+                    name=channel.name,
+                    topic=channel.topic,
+                    nsfw=channel.nsfw,
+                    position=channel.position,
+                    category=target_category
+                )
+            elif isinstance(channel, discord.VoiceChannel):
+                await main_guild.create_voice_channel(
+                    name=channel.name,
+                    user_limit=channel.user_limit,
+                    position=channel.position,
+                    category=target_category
+                )
+        except Exception as e:
+            print(f"Kanal oluşturulamadı ({channel.name}): {e}")
+
+    await interaction.followup.send(f"✅ **Klonlama Başarıyla Tamamlandı!**\n`{target_guild.name}` sunucusunun kanal yapısı `{main_guild.name}` sunucusuna tamamen aktarıldı.", ephemeral=True)
 
 # --- S!SYNC KOMUTU ---
 @bot.command(name="sync")
