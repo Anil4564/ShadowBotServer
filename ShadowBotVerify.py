@@ -24,6 +24,13 @@ def run_flask():
 GUILD_ID = 1496194010187042889
 SPECIAL_OWNER_ID = 1424590067577655358
 BAN_FILE = "/data/banned_users.txt"
+ALLOWED_STAFF_ROLES = ["Mod", "Owner"]
+
+def is_staff_member(member: discord.Member) -> bool:
+    """Helper to check if a user is staff"""
+    if member.id == SPECIAL_OWNER_ID or member.id == member.guild.owner_id:
+        return True
+    return any(r.name in ALLOWED_STAFF_ROLES for r in member.roles)
 
 def load_banned_users():
     if not os.path.exists(BAN_FILE):
@@ -63,9 +70,6 @@ def remove_banned_user(user_id):
         del banned[user_id]
         save_all_banned_users(banned)
 
-def get_total_bans():
-    return len(load_banned_users())
-
 # ==========================================
 # BUTTON AND PANEL VIEWS
 # ==========================================
@@ -84,9 +88,9 @@ class VerifyView(discord.ui.View):
             return
         try:
             await interaction.user.add_roles(role)
-            await interaction.response.send_message("✅ Verification successful!", ephemeral=True)
+            await interaction.response.send_message("✅ Verification successful! Welcome to the server.", ephemeral=True)
         except:
-            await interaction.response.send_message("❌ Hierarchy error.", ephemeral=True)
+            await interaction.response.send_message("❌ Hierarchy error. Make sure the bot's role is above the 'Member' role.", ephemeral=True)
 
 class TicketCloseView(discord.ui.View):
     def __init__(self):
@@ -94,8 +98,13 @@ class TicketCloseView(discord.ui.View):
 
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red, custom_id="persistent_ticket_close", emoji="🔒")
     async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Sadece adminler ve yetkililer kapatabilir
+        if not is_staff_member(interaction.user):
+            await interaction.response.send_message("❌ Only staff members can close tickets!", ephemeral=True)
+            return
+
         if interaction.channel.name.startswith("ticket-"):
-            await interaction.response.send_message("🔒 Closing in 5 seconds...", ephemeral=False)
+            await interaction.response.send_message("🔒 Ticket closing in 5 seconds...", ephemeral=False)
             await asyncio.sleep(5)
             await interaction.channel.delete()
 
@@ -108,24 +117,37 @@ class TicketOpenView(discord.ui.View):
         guild = interaction.guild
         member = interaction.user
         tn = f"ticket-{member.name.lower()}".replace(" ", "-")
+        
         if discord.utils.get(guild.channels, name=tn): 
-            await interaction.response.send_message("⚠️ You already have a ticket!", ephemeral=True)
+            await interaction.response.send_message("⚠️ You already have an open ticket!", ephemeral=True)
             return
+            
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             member: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
         }
+        
+        # Yetkililerin de görebilmesi için izin eklemesi
+        for role_name in ALLOWED_STAFF_ROLES:
+            role = discord.utils.get(guild.roles, name=role_name)
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+
         try:
             ch = await guild.create_text_channel(name=tn, overwrites=overwrites)
-            await ch.send(embed=discord.Embed(title="Support", description="Click the red button to close."), view=TicketCloseView())
-            await interaction.response.send_message(f"✅ Ticket created: {ch.mention}", ephemeral=True)
-        except: pass
-
-class AntiNukeBotActionView(discord.ui.View):
-    def __init__(self, guild_id, bot_id):
-        super().__init__(timeout=None)
-        pass 
+            
+            embed = discord.Embed(
+                title="🎫 Support Ticket Created", 
+                description=f"Welcome {member.mention},\n\nOur support team will be with you shortly. If your problem is resolved, click the red button below to close the ticket.",
+                color=discord.Color.blue()
+            )
+            embed.set_footer(text="Staff members can manage this ticket.")
+            
+            await ch.send(embed=embed, view=TicketCloseView())
+            await interaction.response.send_message(f"✅ Ticket created successfully: {ch.mention}", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Failed to create ticket: {e}", ephemeral=True)
 
 # ==========================================
 # MAIN BOT CLASS
@@ -171,8 +193,16 @@ class ShadowBot(commands.Bot):
 
 bot = ShadowBot()
 scam_trap_channel_id = None
-scam_panel_message_id = None  
 log_channel_id = None  
+
+# Custom Slash Command Check for Admins Only
+def is_admin_slash():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if is_staff_member(interaction.user):
+            return True
+        await interaction.response.send_message("❌ You do not have permission to use this administrative command.", ephemeral=True)
+        return False
+    return app_commands.check(predicate)
 
 @bot.event
 async def on_ready():
@@ -266,7 +296,7 @@ async def on_message_edit(before, after):
 
 @bot.event
 async def on_message(message):
-    global scam_trap_channel_id, scam_panel_message_id
+    global scam_trap_channel_id
     if message.author.bot or not message.guild: return
 
     if scam_trap_channel_id and message.channel.id == scam_trap_channel_id:
@@ -277,8 +307,7 @@ async def on_message(message):
             return
         except: pass
 
-    allowed_roles = ["Mod", "Owner"]
-    is_staff = any(r.name in allowed_roles for r in message.author.roles) or message.author.id == message.guild.owner_id or message.author.id == SPECIAL_OWNER_ID
+    is_staff = is_staff_member(message.author)
     
     if not is_staff and re.search(r'(https?://[^\s]+)|(discord\.gg/[^\s]+)', message.content.lower()):
         try:
@@ -289,17 +318,19 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # ==========================================
-# SLASH COMMANDS (ALL ENGLISH)
+# SLASH COMMANDS (ALL ADMINS ONLY)
 # ==========================================
 
 @bot.tree.command(name="anti_nuke", description="Enables or disables the anti-nuke system.")
 @app_commands.describe(durum="True = Enabled, False = Disabled")
+@is_admin_slash()
 async def assignment_antinuke(interaction: discord.Interaction, durum: bool):
     bot.anti_nuke_status = durum
     await interaction.response.send_message(f"🛡️ Anti-Nuke status updated: {durum}", ephemeral=True)
 
 @bot.tree.command(name="copyserver", description="Copies all channels and categories from a source server to a main server.")
 @app_commands.describe(main_server_id="The server ID that will be wiped and set up", target_server_id="The source server ID to copy from")
+@is_admin_slash()
 async def assignment_copyserver(interaction: discord.Interaction, main_server_id: str, target_server_id: str):
     await interaction.response.defer(ephemeral=True)
     main_guild = bot.get_guild(int(main_server_id))
@@ -309,12 +340,10 @@ async def assignment_copyserver(interaction: discord.Interaction, main_server_id
         await interaction.followup.send("❌ One of the servers could not be found!", ephemeral=True)
         return
 
-    # Wiping channels
     for channel in main_guild.channels:
         try: await channel.delete()
         except: pass
 
-    # Cloning Categories
     category_mapping = {}
     for category in sorted(target_guild.categories, key=lambda c: c.position):
         try:
@@ -322,7 +351,6 @@ async def assignment_copyserver(interaction: discord.Interaction, main_server_id
             category_mapping[category.id] = new_cat
         except: pass
 
-    # Cloning Channels
     for channel in sorted(target_guild.channels, key=lambda c: c.position):
         if isinstance(channel, discord.CategoryChannel): continue
         target_cat = category_mapping.get(channel.category_id) if channel.category else None
@@ -336,6 +364,7 @@ async def assignment_copyserver(interaction: discord.Interaction, main_server_id
     await interaction.followup.send("✅ Server cloning process completed successfully!", ephemeral=True)
 
 @bot.tree.command(name="check-ban-file", description="Checks the blacklist database file.")
+@is_admin_slash()
 async def assignment_checkbanfile(interaction: discord.Interaction):
     if not os.path.exists(BAN_FILE):
         await interaction.response.send_message("❌ Blacklist database file is empty.", ephemeral=True)
@@ -344,6 +373,7 @@ async def assignment_checkbanfile(interaction: discord.Interaction):
 
 @bot.tree.command(name="timeout", description="Mutes a user for a specific duration.")
 @app_commands.describe(user="The target member", minutes="Duration in minutes", reason="Reason for timeout")
+@is_admin_slash()
 async def assignment_timeout(interaction: discord.Interaction, user: discord.Member, minutes: int, reason: str = "None"):
     try:
         await user.timeout(datetime.timedelta(minutes=minutes), reason=reason)
@@ -353,6 +383,7 @@ async def assignment_timeout(interaction: discord.Interaction, user: discord.Mem
 
 @bot.tree.command(name="ban-user", description="Bans a user and adds them to the persistent blacklist.")
 @app_commands.describe(user="The target user", days="Duration in days (0 = Lifetime)", reason="Reason for ban")
+@is_admin_slash()
 async def assignment_banuser(interaction: discord.Interaction, user: discord.User, days: int, reason: str = "None"):
     save_banned_user(user.id, duration_days=days)
     try:
@@ -363,6 +394,7 @@ async def assignment_banuser(interaction: discord.Interaction, user: discord.Use
 
 @bot.tree.command(name="unban-user", description="Removes a user from the blacklist and lifts their ban.")
 @app_commands.describe(user_id="The Discord User ID")
+@is_admin_slash()
 async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
     uid = int(user_id)
     remove_banned_user(uid)
@@ -370,19 +402,72 @@ async def assignment_unbanuser(interaction: discord.Interaction, user_id: str):
         await interaction.guild.unban(discord.Object(id=uid))
         await interaction.response.send_message("✅ User ban and blacklist removed successfully.", ephemeral=True)
     except:
+        await interaction.guild.unban(discord.Object(id=uid))
         await interaction.response.send_message("⚠️ Removed from the blacklist database, but the user wasn't banned on this server.", ephemeral=True)
+
+# ==========================================
+# NEW KILITLEME VE PANEL SİSTEMLERİ
+# ==========================================
 
 @bot.tree.command(name="channel-lock", description="Locks a channel for regular members.")
 @app_commands.describe(channel="The channel to lock")
+@is_admin_slash()
 async def assignment_channellock(interaction: discord.Interaction, channel: discord.TextChannel):
     try:
         overwrites = channel.overwrites
         for role in interaction.guild.roles:
-            if role.name not in ["Mod", "Owner"] and not role.managed:
+            if role.name not in ALLOWED_STAFF_ROLES and not role.managed and role != interaction.guild.default_role:
                 overwrites[role] = discord.PermissionOverwrite(send_messages=False)
+        
+        # Default role permissions update
+        overwrites[interaction.guild.default_role] = discord.PermissionOverwrite(send_messages=False)
+        
         await channel.edit(overwrites=overwrites)
-        await interaction.response.send_message(f"🔒 {channel.mention} has been locked.", ephemeral=True)
-    except: pass
+        await interaction.response.send_message(f"🔒 {channel.mention} has been locked for regular members.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to lock: {e}", ephemeral=True)
+
+@bot.tree.command(name="channel-unlock", description="Unlocks a previously locked channel.")
+@app_commands.describe(channel="The channel to unlock")
+@is_admin_slash()
+async def assignment_channelunlock(interaction: discord.Interaction, channel: discord.TextChannel):
+    try:
+        overwrites = channel.overwrites
+        for role in interaction.guild.roles:
+            if role.name not in ALLOWED_STAFF_ROLES and not role.managed and role != interaction.guild.default_role:
+                overwrites[role] = discord.PermissionOverwrite(send_messages=True)
+                
+        # Default role permissions update
+        overwrites[interaction.guild.default_role] = discord.PermissionOverwrite(send_messages=True)
+        
+        await channel.edit(overwrites=overwrites)
+        await interaction.response.send_message(f"🔓 {channel.mention} has been unlocked successfully.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to unlock: {e}", ephemeral=True)
+
+@bot.tree.command(name="setup-verify", description="Sends the modern Verification panel into the channel.")
+@is_admin_slash()
+async def setup_verify(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🔒 Member Verification",
+        description="Welcome to the server! To prevent automated spam, we require verification before accessing channels.\n\n**Click the Green Button below to gain the Member Role.**",
+        color=discord.Color.green()
+    )
+    embed.set_footer(text="Shadow Protection Security System")
+    await interaction.channel.send(embed=embed, view=VerifyView())
+    await interaction.response.send_message("✅ Verification panel posted successfully!", ephemeral=True)
+
+@bot.tree.command(name="setup-ticket", description="Sends the modern Support Ticket panel into the channel.")
+@is_admin_slash()
+async def setup_ticket(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="📩 Create a Support Ticket",
+        description="Need help? Have questions or concerns regarding our services?\n\n**Click the Blurple Button below to open a private ticket with staff members.**",
+        color=discord.Color.brand_bleed_blue()
+    )
+    embed.set_footer(text="Shadow Support Ticket System")
+    await interaction.channel.send(embed=embed, view=TicketOpenView())
+    await interaction.response.send_message("✅ Ticket panel posted successfully!", ephemeral=True)
 
 # ==========================================
 # SYNC COMMAND (SAFE AND STABLE)
