@@ -246,7 +246,8 @@ async def send_log(embed):
 async def dynamic_nuke_check(guild, action_type, discord_action):
     if not bot.anti_nuke_status or not guild: return
 
-    async range_entry in guild.audit_logs(action=discord_action, limit=1):
+    # HATALI KISIM DÜZELTİLDİ: "async for entry in ..." yapıldı
+    async for entry in guild.audit_logs(action=discord_action, limit=1):
         user = entry.user
         if user.id == bot.user.id or user.id == SPECIAL_OWNER_ID: return
         if user.id == guild.owner_id: return 
@@ -298,14 +299,11 @@ async def on_member_ban(guild, user):
 
 @bot.event
 async def on_member_remove(member):
-    # Önce istatistik kanalını güvenli bir şekilde güncelle
     await update_server_stats(member.guild)
-    # Sağ tık kick işlemlerini yakalamak için kontrolü çalıştır
     await dynamic_nuke_check(member.guild, "kick", discord.AuditLogAction.kick)
 
 @bot.event
 async def on_member_join(member):
-    # Karalistede ise anında re-ban at ve kanalı güncellemeden çık (çünkü üye sunucuya aslında giremedi)
     if member.id in load_banned_users():
         try: 
             await member.ban(reason="Blacklist Auto-Reban")
@@ -313,10 +311,8 @@ async def on_member_join(member):
         except: 
             pass
         
-    # Eğer karalistede değilse, normal üye katılımı olduğu için istatistiği güncelle
     await update_server_stats(member.guild)
         
-    # Sunucuya izinsiz bot ekleme koruması
     if member.bot and bot.anti_nuke_status:
         async for entry in member.guild.audit_logs(action=discord.AuditLogAction.bot_add, limit=1):
             inviter = entry.user
