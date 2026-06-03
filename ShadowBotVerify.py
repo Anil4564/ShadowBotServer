@@ -469,6 +469,57 @@ async def setup_ticket(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=TicketOpenView())
     await interaction.response.send_message("✅ Ticket panel posted successfully!", ephemeral=True)
 
+@bot.tree.command(name="secure-server-permissions", description="Locks down all channels: resets everyone and member role permissions.")
+@is_admin_slash()
+async def assignment_secureserverpermissions(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    
+    # Member rolünü sunucudan çekiyoruz
+    member_role = discord.utils.get(guild.roles, name="Member")
+    everyone_role = guild.default_role
+
+    if not member_role:
+        await interaction.followup.send("❌ 'Member' role could not be found! Please create the role first.", ephemeral=True)
+        return
+
+    success_count = 0
+    fail_count = 0
+
+    # Sunucudaki tüm kanalları (Yazı, Ses, Kategori) dönüyoruz
+    for channel in guild.channels:
+        try:
+            # Mevcut izinleri alıyoruz veya temiz bir sözlük oluşturuyoruz
+            overwrites = channel.overwrites
+
+            if isinstance(channel, discord.VoiceChannel):
+                # --- SES KANALLARI AYARI ---
+                # everyone -> Bağlan: X
+                # Member -> Bağlan: X
+                overwrites[everyone_role] = discord.PermissionOverwrite(connect=False)
+                overwrites[member_role] = discord.PermissionOverwrite(connect=False)
+            
+            else:
+                # --- YAZI KANALLARI VE KATEGORİLER AYARI ---
+                # everyone -> Kanalı Görüntüle: X
+                # Member -> Kanalı Görüntüle: ✔️ | Mesaj Gönder: X
+                overwrites[everyone_role] = discord.PermissionOverwrite(view_channel=False)
+                overwrites[member_role] = discord.PermissionOverwrite(view_channel=True, send_messages=False)
+
+            # Değişiklikleri kanala uyguluyoruz
+            await channel.edit(overwrites=overwrites)
+            success_count += 1
+        except Exception as e:
+            fail_count += 1
+            continue
+
+    await interaction.followup.send(
+        f"✅ **Server Permission Synchronization Completed!**\n"
+        f"🔹 Successfully updated: `{success_count}` channels/categories.\n"
+        f"⚠️ Failed (Insufficient permissions/system channel): `{fail_count}` channels.", 
+        ephemeral=True
+    )
+
 # ==========================================
 # SYNC COMMAND (SAFE AND STABLE)
 # ==========================================
