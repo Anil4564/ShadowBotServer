@@ -29,7 +29,7 @@ ALLOWED_STAFF_ROLES = ["Mod", "Owner"]
 # ==========================================
 # İSTATİSTİK KANAL AYARLARI
 # ==========================================
-STATS_CHANNEL_ID = 1511539350133805117  # <--- Buraya kendi ses kanalının ID'sini yaz!
+STATS_CHANNEL_ID = 1511539350133805117  
 
 # AGRESSIVE ANTI-NUKE RATELIMITS (Saniyede 1 işlem sınırı)
 LIMIT_TIME = 5.0  # Kaç saniye kontrol edilecek
@@ -59,14 +59,13 @@ def load_banned_users():
 
 async def update_server_stats(guild):
     """Sunucu üye sayısına göre ses kanalının adını günceller"""
-    if not guild: return
+    if not guild or guild.id != GUILD_ID: return
     
     ch = guild.get_channel(STATS_CHANNEL_ID)
     if ch and isinstance(ch, discord.VoiceChannel):
         total_members = guild.member_count
         new_name = f"「🌍」Community: {total_members} People"
         
-        # Eğer kanal adı zaten aynıysa Discord API'sini gereksiz yormamak için güncelleme yapma
         if ch.name != new_name:
             try:
                 await ch.edit(name=new_name)
@@ -184,7 +183,6 @@ class ShadowBot(commands.Bot):
         
         self.anti_nuke_status = True  
         
-        # Hafıza tabanlı anlık takip sözlükleri (Daha hızlı tetiklenme için)
         self.action_logs = {
             "channel_delete": {},
             "role_delete": {},
@@ -233,7 +231,6 @@ def is_admin_slash():
 @bot.event
 async def on_ready():
     print(f"[{bot.user.name}] SECURITY BOT IS ONLINE. Type s!sync to load commands.")
-    # Bot açılır açılmaz ana sunucunun istatistiğini günceller
     guild = bot.get_guild(GUILD_ID)
     if guild:
         await update_server_stats(guild)
@@ -247,50 +244,35 @@ async def send_log(embed):
 # GELİŞMİŞ KURŞUN GEÇİRMEZ ANTI-NUKE MOTORU
 # ==========================================
 async def dynamic_nuke_check(guild, action_type, discord_action):
-    """Saniyeler içinde nuke atan kişiyi tespit edip yok eden ana motor"""
     if not bot.anti_nuke_status or not guild: return
 
-    # Audit log'dan son işlemi aşırı hızlıca çek
-    async for entry in guild.audit_logs(action=discord_action, limit=1):
+    async range_entry in guild.audit_logs(action=discord_action, limit=1):
         user = entry.user
-        
-        # Botun kendisi veya ana kurucu ise işlem yapma
         if user.id == bot.user.id or user.id == SPECIAL_OWNER_ID: return
-        
-        # Sunucu sahibi hesabı çalınmış olabilir, nuke atıyorsa onu bile engelle!
-        # (İstersen aşağıdaki satırı aktif edebilirsin, şimdilik owner korumalı)
         if user.id == guild.owner_id: return 
 
         current_time = time.time()
         if user.id not in bot.action_logs[action_type]:
             bot.action_logs[action_type][user.id] = []
 
-        # Zaman aşımına uğramış eski kayıtları temizle
         bot.action_logs[action_type][user.id] = [t for t in bot.action_logs[action_type][user.id] if current_time - t <= LIMIT_TIME]
-        
-        # Yeni işlemi listeye ekle
         bot.action_logs[action_type][user.id].append(current_time)
 
-        # Eğer belirlenen sürede limit aşıldıysa ACİL MÜDAHALE
         if len(bot.action_logs[action_type][user.id]) > MAX_ALLOWED:
             await execute_emergency_punishment(guild, user, f"Mass {action_type.replace('_', ' ').title()}")
 
 async def execute_emergency_punishment(guild, user, reason):
-    """Zararlı yetkiliyi saniyeler içinde sunucudan kazıyan fonksiyon"""
     try:
         member = await guild.fetch_member(user.id)
         if not member: return
 
-        # 1. HAMLE: Tüm rollerini hemen sil (Rol silmek banlamaktan daha hızlıdır ve yetkilerini anında sıfırlar!)
         try: 
             await member.edit(roles=[], reason="Anti-Nuke Emergency Lockdown")
         except: pass
 
-        # 2. HAMLE: Kalıcı veritabanına ekle ve banla
         save_banned_user(member.id)
         await member.ban(reason=f"🚨 SHADOW ANTI-NUKE: {reason}")
 
-        # Log Gönder
         embed = discord.Embed(
             title="🚨 ULTRA ANTI-NUKE TETİKLENDİ", 
             description=f"**Saldırgan:** {member.mention} (`{member.id}`)\n**Sebep:** {reason}\n\n**Uygulanan İşlem:** Bütün rolleri alındı ve sunucudan kalıcı olarak uzaklaştırıldı.",
@@ -316,24 +298,29 @@ async def on_member_ban(guild, user):
 
 @bot.event
 async def on_member_remove(member):
+    # Önce istatistik kanalını güvenli bir şekilde güncelle
     await update_server_stats(member.guild)
-    # Sağ tık kick işlemlerini yakalamak için
+    # Sağ tık kick işlemlerini yakalamak için kontrolü çalıştır
     await dynamic_nuke_check(member.guild, "kick", discord.AuditLogAction.kick)
 
 @bot.event
 async def on_member_join(member):
-    await update_server_stats(member.guild)
-    # Karalistede ise anında re-ban
+    # Karalistede ise anında re-ban at ve kanalı güncellemeden çık (çünkü üye sunucuya aslında giremedi)
     if member.id in load_banned_users():
-        try: await member.ban(reason="Blacklist Auto-Reban"); return
-        except: pass
+        try: 
+            await member.ban(reason="Blacklist Auto-Reban")
+            return
+        except: 
+            pass
         
-    # Sunucuya izinsiz bot ekleme koruması (En büyük nuke yöntemlerinden biri)
+    # Eğer karalistede değilse, normal üye katılımı olduğu için istatistiği güncelle
+    await update_server_stats(member.guild)
+        
+    # Sunucuya izinsiz bot ekleme koruması
     if member.bot and bot.anti_nuke_status:
         async for entry in member.guild.audit_logs(action=discord.AuditLogAction.bot_add, limit=1):
             inviter = entry.user
             if inviter.id != SPECIAL_OWNER_ID and inviter.id != member.guild.owner_id:
-                # Botu ekleyen yetkiliyi anında banla ve eklenen botu şutla
                 await execute_emergency_punishment(member.guild, inviter, "Unauthorized Bot Invitation")
                 try: await member.ban(reason="Anti-Nuke: Unapproved Malicious Bot")
                 except: pass
