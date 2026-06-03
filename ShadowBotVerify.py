@@ -29,7 +29,7 @@ ALLOWED_STAFF_ROLES = ["Mod", "Owner"]
 # ==========================================
 # İSTATİSTİK KANAL AYARLARI
 # ==========================================
-STATS_CHANNEL_ID = 123456789012345678  # <--- Buraya kendi ses kanalının ID'sini yaz!
+STATS_CHANNEL_ID = 1511539350133805117  # <--- Buraya kendi ses kanalının ID'sini yaz!
 
 # AGRESSIVE ANTI-NUKE RATELIMITS (Saniyede 1 işlem sınırı)
 LIMIT_TIME = 5.0  # Kaç saniye kontrol edilecek
