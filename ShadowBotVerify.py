@@ -114,12 +114,15 @@ class TicketOpenView(discord.ui.View):
 
     @discord.ui.button(label="Open Ticket", style=discord.ButtonStyle.blurple, custom_id="persistent_ticket_open", emoji="📩")
     async def open_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Discord'a işlem yapılıyor yanıtı veriyoruz (Hata vermesini engeller)
+        await interaction.response.defer(ephemeral=True)
+        
         guild = interaction.guild
         member = interaction.user
         tn = f"ticket-{member.name.lower()}".replace(" ", "-")
         
         if discord.utils.get(guild.channels, name=tn): 
-            await interaction.response.send_message("⚠️ You already have an open ticket!", ephemeral=True)
+            await interaction.followup.send("⚠️ You already have an open ticket!", ephemeral=True)
             return
             
         overwrites = {
@@ -128,7 +131,6 @@ class TicketOpenView(discord.ui.View):
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
         }
         
-        # Yetkililerin de görebilmesi için izin eklemesi
         for role_name in ALLOWED_STAFF_ROLES:
             role = discord.utils.get(guild.roles, name=role_name)
             if role:
@@ -145,9 +147,9 @@ class TicketOpenView(discord.ui.View):
             embed.set_footer(text="Staff members can manage this ticket.")
             
             await ch.send(embed=embed, view=TicketCloseView())
-            await interaction.response.send_message(f"✅ Ticket created successfully: {ch.mention}", ephemeral=True)
+            await interaction.followup.send(f"✅ Ticket created successfully: {ch.mention}", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"❌ Failed to create ticket: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Failed to create ticket: {e}", ephemeral=True)
 
 # ==========================================
 # MAIN BOT CLASS
@@ -460,14 +462,19 @@ async def setup_verify(interaction: discord.Interaction):
 @bot.tree.command(name="setup-ticket", description="Sends the modern Support Ticket panel into the channel.")
 @is_admin_slash()
 async def setup_ticket(interaction: discord.Interaction):
+    # Komutun yanıt süresini uzatıyoruz
+    await interaction.response.defer(ephemeral=True)
+    
     embed = discord.Embed(
         title="📩 Create a Support Ticket",
         description="Need help? Have questions or concerns regarding our services?\n\n**Click the Blurple Button below to open a private ticket with staff members.**",
-        color=discord.Color.brand_bleed_blue()
+        color=discord.Color.blue()
     )
     embed.set_footer(text="Shadow Support Ticket System")
+    
+    # Kanala mesajı kalıcı view (TicketOpenView) ile birlikte gönderiyoruz
     await interaction.channel.send(embed=embed, view=TicketOpenView())
-    await interaction.response.send_message("✅ Ticket panel posted successfully!", ephemeral=True)
+    await interaction.followup.send("✅ Ticket panel posted successfully!", ephemeral=True)
 
 @bot.tree.command(name="secure-server-permissions", description="Locks down all channels: resets everyone and member role permissions.")
 @is_admin_slash()
